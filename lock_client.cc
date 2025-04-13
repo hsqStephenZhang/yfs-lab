@@ -4,12 +4,11 @@
 #include "rpc.h"
 #include <arpa/inet.h>
 
-#include <sstream>
 #include <iostream>
+#include <sstream>
 #include <stdio.h>
 
-lock_client::lock_client(std::string dst)
-{
+lock_client::lock_client(std::string dst) {
   sockaddr_in dstsock;
   make_sockaddr(dst.c_str(), &dstsock);
   cl = new rpcc(dstsock);
@@ -18,24 +17,23 @@ lock_client::lock_client(std::string dst)
   }
 }
 
-int
-lock_client::stat(lock_protocol::lockid_t lid)
-{
+int lock_client::stat(lock_protocol::lockid_t lid) {
   int r;
   int ret = cl->call(lock_protocol::stat, cl->id(), lid, r);
-  assert (ret == lock_protocol::OK);
+  assert(ret == lock_protocol::OK);
   return r;
 }
 
-lock_protocol::status
-lock_client::acquire(lock_protocol::lockid_t lid)
-{
-  return lock_protocol::RPCERR;
+int lock_client::acquire(lock_protocol::lockid_t lid) {
+  int r;
+  int res = cl->call(lock_protocol::acquire, cl->id(), lid, r);
+  assert(res == lock_protocol::OK);
+  return res;
 }
 
-lock_protocol::status
-lock_client::release(lock_protocol::lockid_t lid)
-{
-  return lock_protocol::RPCERR;
+int lock_client::release(lock_protocol::lockid_t lid) {
+  int r;
+  int res = cl->call(lock_protocol::release, cl->id(), lid, r);
+  assert(res == lock_protocol::OK);
+  return res;
 }
-
