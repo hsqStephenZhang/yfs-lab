@@ -225,7 +225,7 @@ rpcc::call1(unsigned int proc, marshall &req, unmarshall &rep,
 
 		if (retrans_ && (!ch || ch->isdead())) {
 			//since connection is dead, we retransmit on the new connection 
-			transmit = true; 
+			transmit = true;
 		}
 		curr_to.to <<= 1;
 	}

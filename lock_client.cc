@@ -4,8 +4,6 @@
 #include "rpc.h"
 #include <arpa/inet.h>
 
-#include <iostream>
-#include <sstream>
 #include <stdio.h>
 
 lock_client::lock_client(std::string dst) {
