@@ -1,0 +1,4 @@
+# .clangd
+
+CompileFlags:               # Top-level key
+  Add: [-Wno-vla]           # Add the flag to disable the VLA warning

@@ -29,6 +29,18 @@
             "externalConsole": false,
             "MIMode": "gdb",
             "preLaunchTask": "build",
+        },
+        {
+            "name": "rpctest",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/rpc/rpctest",
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "preLaunchTask": "build",
         }
     ]
 }
