@@ -23,7 +23,6 @@ lock_protocol::status lock_server::acquire(int clt, lock_protocol::lockid_t lid,
   ScopedLock sl(&m);
 
   if (locks.find(lid) == locks.end()) {
-    // locks.emplace(std::pair<long long unsigned int, lock_handle>(lid, lock_handle()));
     locks.emplace(lid, lock_handle());
   }
   lock_handle &lh = locks[lid];
