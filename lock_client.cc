@@ -2,6 +2,7 @@
 
 #include "lock_client.h"
 #include "rpc.h"
+#include "slock.h"
 #include <arpa/inet.h>
 
 #include <stdio.h>
