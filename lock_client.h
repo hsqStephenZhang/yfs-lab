@@ -6,7 +6,6 @@
 #include <string>
 #include "lock_protocol.h"
 #include "rpc.h"
-#include <vector>
 
 // Client interface to the lock server
 class lock_client {
