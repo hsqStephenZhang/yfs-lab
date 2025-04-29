@@ -2,9 +2,12 @@
 *.o
 **/*.a
 lock_demo
+extent_server
+yfs_client
 lock_server
 lock_tester
 rpc/rpctest
+**/*.log
 compile_commands.json
 .cache/**
 
