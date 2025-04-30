@@ -11,6 +11,7 @@
 #include <pthread.h>
 #include <string>
 #include <unordered_map>
+#include <utils.h>
 
 // will be a simple K,V in-memory store in lab2
 class extent_server {
@@ -28,14 +29,15 @@ private:
 
 public:
   extent_server() {
-    assert(pthread_mutex_init(&m, 0) == 0);
+    DEBUG_ASSERT_EQ(pthread_mutex_init(&m, 0), 0);
     auto tmp = 0;
     // create root node
-    this->put(1, "/", tmp);
+    this->put(1, "", tmp);
     next_id = 2;
   }
-  ~extent_server() { assert(pthread_mutex_destroy(&m)); }
+  ~extent_server() { DEBUG_ASSERT_EQ(pthread_mutex_destroy(&m), 0); }
 
+  // we do not care about the size & offset in lab2
   int put(extent_protocol::extentid_t id, std::string, int &);
   int get(extent_protocol::extentid_t id, std::string &);
   int getattr(extent_protocol::extentid_t id, extent_protocol::attr &);

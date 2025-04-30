@@ -3,6 +3,7 @@
 **/*.a
 lock_demo
 extent_server
+extent_server_test
 yfs_client
 lock_server
 lock_tester
@@ -10,4 +11,6 @@ rpc/rpctest
 **/*.log
 compile_commands.json
 .cache/**
+yfs1
+yfs2
 

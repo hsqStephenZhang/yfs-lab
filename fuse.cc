@@ -23,20 +23,6 @@ yfs_client *yfs;
 
 int id() { return myid; }
 
-// read [off:min(off+size, length)] from extent server
-// return OK if success, and will assign the buffer to buf
-yfs_client::status read_helper(yfs_client::inum inum, size_t size, off_t off,
-                               char **buf) {
-  return yfs_client::OK;
-}
-
-// write buf to extent server at [off:off+size], will extend the file's length
-// if off+size>length returns OK if success
-yfs_client::status write_helper(yfs_client::inum inum, const char *buf,
-                                size_t size, off_t off) {
-  return yfs_client::OK;
-}
-
 yfs_client::status getattr_helper(yfs_client::inum inum, struct stat &st) {
   yfs_client::status ret;
 
@@ -234,7 +220,8 @@ void fuseserver_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
   memset(&b, 0, sizeof(b));
 
   // fill in the b data structure using dirbuf_add
-  for (const yfs_client::dirent &entry : yfs->readdir(ino)) {
+  auto dirs = yfs->readdir(ino);
+  for (const yfs_client::dirent &entry : dirs) {
     dirbuf_add(&b, entry.name.c_str(), entry.inum);
   }
 

@@ -85,7 +85,6 @@ yfs_client::status yfs_client::create(inum parent, const std::string &name,
   new_id = lookup(parent, name);
   if (new_id == 0) {
     this->ec->alloc_ino(0, new_id);
-    // set file bit
     new_id |= 0x80000000;
     this->ec->put(new_id, "");
 
@@ -135,6 +134,11 @@ std::vector<yfs_client::dirent> yfs_client::readdir(inum dir) {
 
     token = std::strtok(nullptr, ";");
   }
+  std::cout << "readdir of: " << dir << "\n";
+  for (const auto &entry : res) {
+    std::cout << "  " << entry.name << " -> " << entry.inum << "\n";
+  }
+  std::cout << "end of readdir\n";
 
   return res;
 }
