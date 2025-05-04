@@ -1,0 +1,46 @@
+{
+    "configurations": [
+        {
+            "name": "lock server",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/lock_server",
+            "args": [
+                "3000"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "preLaunchTask": "build",
+        },
+        {
+            "name": "lock tester",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/lock_tester",
+            "args": [
+                "3000"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "preLaunchTask": "build",
+        },
+        {
+            "name": "rpctest",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/rpc/rpctest",
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "preLaunchTask": "build",
+        }
+    ]
+}

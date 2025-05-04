@@ -11,7 +11,7 @@
 #include <stdlib.h>
 
 static pthread_t
-method_thread_parent(void *(*fn)(void *), void *arg, bool detach)
+__attribute__((unused)) method_thread_parent(void *(*fn)(void *), void *arg, bool detach)
 {
 	pthread_t th;
 	pthread_attr_t attr;
