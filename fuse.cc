@@ -11,6 +11,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <fuse/fuse_lowlevel.h>
 #include <fuse_lowlevel.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -98,23 +99,38 @@ void fuseserver_getattr(fuse_req_t req, fuse_ino_t ino,
 void fuseserver_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
                         int to_set, struct fuse_file_info *fi) {
   printf("fuseserver_setattr 0x%x\n", to_set);
+  yfs_client::inum inum = ino; // req->in.h.nodeid;
+  struct stat st;
+  yfs_client::status ret;
+  if (getattr_helper(inum, st) != yfs_client::OK) {
+    fuse_reply_err(req, ENOENT);
+    return;
+  }
   if (FUSE_SET_ATTR_SIZE & to_set) {
     printf("   fuseserver_setattr set size to %zu\n", attr->st_size);
-#if 0
-    struct stat st;
-    // You fill this in
-    fuse_reply_attr(req, &st, 0);
-#else
-    fuse_reply_err(req, ENOSYS);
-#endif
-  } else {
-    fuse_reply_err(req, ENOSYS);
+    st.st_size = attr->st_size;
+    auto current_time = time(0);
+    st.st_atime = st.st_ctime = current_time;
   }
+  if (FUSE_SET_ATTR_ATIME & to_set) {
+    printf("   fuseserver_setattr set atime to %zu\n", attr->st_atime);
+    st.st_atime = attr->st_atime;
+  }
+  if (FUSE_SET_ATTR_MTIME & to_set) {
+    printf("   fuseserver_setattr set mtime to %zu\n", attr->st_mtime);
+    st.st_mtime = attr->st_mtime;
+  }
+  ret = yfs->setattr(inum, to_set, st);
+  if (ret != yfs_client::OK) {
+    fuse_reply_err(req, ENOENT);
+    return;
+  }
+  fuse_reply_attr(req, &st, 0);
 }
 
 void fuseserver_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
                      struct fuse_file_info *fi) {
-  if (yfs->isfile(ino) && off > 0) {
+  if (yfs->isfile(ino) && off >= 0) {
     std::string data;
     if (yfs->read(ino, size, off, data) == yfs_client::OK) {
       fuse_reply_buf(req, data.c_str(), size);
@@ -126,7 +142,7 @@ void fuseserver_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 
 void fuseserver_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
                       size_t size, off_t off, struct fuse_file_info *fi) {
-  if (yfs->isfile(ino) && off > 0) {
+  if (yfs->isfile(ino) && off >= 0) {
     auto data = std::string(buf, size);
     if (yfs->write(ino, data, off) == yfs_client::OK) {
       fuse_reply_write(req, size);
@@ -234,10 +250,8 @@ void fuseserver_open(fuse_req_t req, fuse_ino_t ino,
   fuse_reply_open(req, fi);
 }
 
-void
-fuseserver_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name,
-     mode_t mode)
-{
+void fuseserver_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name,
+                      mode_t mode) {
 
   // You fill this in
 #if 0

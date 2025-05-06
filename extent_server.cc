@@ -52,15 +52,35 @@ int extent_server::get(extent_protocol::extentid_t id, std::string &buf) {
 
 int extent_server::getattr(extent_protocol::extentid_t id,
                            extent_protocol::attr &a) {
-  // You replace this with a real implementation. We send a phony response
-  // for now because it's difficult to get FUSE to do anything (including
-  // unmount) if getattr fails.
   ScopedLock l(&m);
 
   if (this->store.find(id) == this->store.end()) {
     return extent_protocol::NOENT;
   } else {
     a = store[id].attr;
+
+    return extent_protocol::OK;
+  }
+}
+
+// we use the same attr defind in FUSE
+#define FUSE_SET_ATTR_SIZE (1 << 3)
+#define FUSE_SET_ATTR_ATIME (1 << 4)
+#define FUSE_SET_ATTR_MTIME (1 << 5)
+
+int extent_server::setattr(extent_protocol::extentid_t id,
+                           extent_protocol::attr &a) {
+  ScopedLock l(&m);
+
+  if (this->store.find(id) == this->store.end()) {
+    return extent_protocol::NOENT;
+  } else {
+    // TODO: shall we check?
+    resize_item_data(id, a.size);
+    store[id].attr.size = a.size;
+    store[id].attr.atime = a.atime;
+    store[id].attr.mtime = a.mtime;
+    store[id].attr.ctime = time(0);
 
     return extent_protocol::OK;
   }
@@ -75,10 +95,23 @@ int extent_server::remove(extent_protocol::extentid_t id, int &r) {
   return extent_protocol::OK;
 }
 
-int extent_server::alloc_ino(extent_protocol::extentid_t id, unsigned long &ino) {
+int extent_server::alloc_ino(extent_protocol::extentid_t id,
+                             unsigned long &ino) {
   ScopedLock l(&m);
   ino = next_id;
   next_id++;
 
   return extent_protocol::OK;
+}
+
+// safety: hold the lock and item exists
+void extent_server::resize_item_data(extent_protocol::extentid_t id,
+                                     unsigned long new_size) {
+  auto it = this->store.find(id);
+  auto &item = it->second;
+  if (new_size > item.data.size()) {
+    item.data.resize(new_size);
+  } else {
+    item.data = item.data.substr(0, new_size);
+  }
 }

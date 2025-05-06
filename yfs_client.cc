@@ -1,6 +1,7 @@
 // yfs client.  implements FS operations using extent and lock server
 #include "yfs_client.h"
 #include "extent_client.h"
+#include <cstddef>
 #include <cstring>
 #include <fcntl.h>
 #include <fuse/fuse_lowlevel.h>
@@ -51,6 +52,25 @@ int yfs_client::getattr(inum inum, fileinfo &fin) {
   fin.ctime = a.ctime;
   fin.size = a.size;
   printf("getfile %016llx -> sz %llu\n", inum, fin.size);
+
+release:
+
+  return r;
+}
+
+int yfs_client::setattr(inum inum, int to_set, struct stat &st) {
+  int r = OK;
+
+  printf("setattr %016llx\n", inum);
+  extent_protocol::attr a;
+  a.atime = st.st_atime;
+  a.mtime = st.st_mtime;
+  a.ctime = st.st_ctime;
+  a.size = st.st_size;
+  if (ec->setattr(inum, a) != extent_protocol::OK) {
+    r = IOERR;
+    goto release;
+  }
 
 release:
 
@@ -143,43 +163,56 @@ std::vector<yfs_client::dirent> yfs_client::readdir(inum dir) {
   return res;
 }
 
-
-yfs_client::status yfs_client::read(inum fi, size_t size, off_t offset, std::string &data) {
-    if (size == 0) {
-        return yfs_client::OK;
-    }
-
-    std::string content;
-    if (this->ec->get(fi, content) != yfs_client::OK) {
-        return yfs_client::NOENT;
-    }
-
-    if (static_cast<size_t>(offset) < content.size()) {
-        data = content.substr(offset, size);
-    }
-
-    if (data.size() < size) {
-        data.resize(size);
-    }
-
+// content range by get: [0, content.size())
+// our range: [offset, offset + size)
+yfs_client::status yfs_client::read(inum fi, size_t size, off_t offset,
+                                    std::string &data) {
+  if (offset < 0) {
+    return yfs_client::IOERR;
+  }
+  if (size == 0) {
     return yfs_client::OK;
+  }
+
+  std::string content;
+  if (this->ec->get(fi, content) != yfs_client::OK) {
+    return yfs_client::NOENT;
+  }
+
+  if (static_cast<size_t>(offset) < content.size()) {
+    data = content.substr(offset, size);
+  } else if (static_cast<size_t>(offset) >= content.size()) {
+    data = std::string();
+  }
+
+  return yfs_client::OK;
 }
 
+// content range by put: [0, old_content.size())
+// our range: [offset, offset + data.size())
 yfs_client::status yfs_client::write(inum fi, std::string &data, off_t offset) {
-    std::string old_content;
-    if (this->ec->get(fi, old_content) != extent_protocol::OK)
-        return yfs_client::NOENT;
+  if (offset < 0) {
+    return yfs_client::IOERR;
+  }
 
-    std::string new_content = old_content;
-    // fill potential hole with '\0'
-    if (static_cast<size_t>(offset) > old_content.size()) {
-        new_content.resize(offset);
+  std::string old_content;
+  if (this->ec->get(fi, old_content) != extent_protocol::OK)
+    return yfs_client::NOENT;
+
+  if (static_cast<size_t>(offset) <= old_content.size()) {
+    if (offset + data.size() <= old_content.size()) {
+      old_content.replace(offset, data.size(), data);
+    } else {
+      old_content.replace(offset, old_content.size() - offset, data);
+      old_content +=
+          std::string(offset + data.size() - old_content.size(), '\0');
     }
-    // write actual data
-    new_content.replace(offset, data.size(), data);
+  } else {
+    old_content.resize(offset, '\0');
+    old_content += data;
+  }
 
-    this->ec->put(fi, new_content);
+  this->ec->put(fi, old_content);
 
-    return yfs_client::OK;
+  return yfs_client::OK;
 }
-

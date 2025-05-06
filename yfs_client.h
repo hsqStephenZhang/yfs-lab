@@ -42,6 +42,7 @@ public:
   inum lookup(inum di, std::string name);
 
   int getattr(inum, fileinfo &);
+  int setattr(inum, int, struct stat &);
   int getdir(inum, dirinfo &);
   // inode num, data size, offset, data
   int read(inum, size_t, off_t, std::string &data);

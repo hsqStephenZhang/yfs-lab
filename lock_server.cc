@@ -1,7 +1,7 @@
 // the lock server implementation
 
 #include "lock_server.h"
-#include "slock.h"
+#include "rpc/slock.h"
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <stdio.h>
