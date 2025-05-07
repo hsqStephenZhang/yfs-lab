@@ -69,7 +69,7 @@ int extent_server::getattr(extent_protocol::extentid_t id,
 #define FUSE_SET_ATTR_MTIME (1 << 5)
 
 int extent_server::setattr(extent_protocol::extentid_t id,
-                           extent_protocol::attr &a) {
+                           extent_protocol::attr a, int &r) {
   ScopedLock l(&m);
 
   if (this->store.find(id) == this->store.end()) {
