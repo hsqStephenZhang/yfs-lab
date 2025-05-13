@@ -15,7 +15,8 @@ else
 MACFLAGS=
 endif
 LDFLAGS = -L. -L/usr/local/lib
-LDLIBS = -lpthread 
+LDLIBS = -lpthread
+GTEST_LIBS = -lgtest_main -lgtest
 ifeq ($(LAB2GE),1)
 ifeq ($(shell uname -s),Darwin)
 ifeq ($(shell sw_vers -productVersion | sed -e "s/.*\(10\.[0-9]\).*/\1/"),10.6)
@@ -34,8 +35,8 @@ CXX = g++
 
 lab:  lab4
 lab1: rpc/rpctest lock_server lock_tester lock_demo
-lab2: yfs_client extent_server
-lab3: yfs_client extent_server
+lab2: yfs_client extent_server lock_server
+lab3: yfs_client extent_server lock_server
 lab4: yfs_client extent_server lock_server test-lab-4-b test-lab-4-c
 lab5: yfs_client extent_server lock_server lock_tester test-lab-4-b\
 	 test-lab-4-c
@@ -190,3 +191,6 @@ l8-sol:
 .PHONY : clean
 clean : 
 	rm -rf rpc/rpctest rpc/*.o rpc/*.d rpc/librpc.a *.o *.d yfs_client extent_server lock_server lock_tester lock_demo rpctest test-lab-4-b test-lab-4-c
+
+extent_server_test: extent_server_test.o extent_server.o rpc/librpc.a
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS) $(GTEST_LIBS)

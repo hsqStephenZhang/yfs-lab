@@ -3,8 +3,6 @@
 #ifndef lock_protocol_h
 #define lock_protocol_h
 
-#include "rpc.h"
-
 class lock_protocol {
  public:
   enum xxstatus { OK, RETRY, RPCERR, NOENT, IOERR };
