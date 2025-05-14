@@ -4,10 +4,12 @@
 #include <string>
 // #include "yfs_protocol.h"
 #include "extent_client.h"
+#include "lock_client.h"
 #include <vector>
 
 class yfs_client {
   extent_client *ec;
+  lock_client *lc;
 
 public:
   typedef unsigned long long inum;
@@ -39,6 +41,7 @@ public:
 
   bool isfile(inum);
   bool isdir(inum);
+  inum lookup_locked(inum di, std::string name);
   inum lookup(inum di, std::string name);
   yfs_client::status unlink(inum parent, std::string name);
 
@@ -49,6 +52,7 @@ public:
   int read(inum, size_t, off_t, std::string &data);
   // inode num, data, offset
   int write(inum, std::string &, off_t);
+  std::vector<dirent> readdir_locked(inum);
   std::vector<dirent> readdir(inum);
   yfs_client::status create(inum parent, const std::string &name,
                             unsigned long &, bool);

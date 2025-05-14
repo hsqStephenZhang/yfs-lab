@@ -14,6 +14,7 @@
 
 yfs_client::yfs_client(std::string extent_dst, std::string lock_dst) {
   ec = new extent_client(extent_dst);
+  lc = new lock_client(lock_dst);
 }
 
 yfs_client::inum yfs_client::n2i(std::string n) {
@@ -39,6 +40,7 @@ bool yfs_client::isdir(inum inum) { return !isfile(inum); }
 
 int yfs_client::getattr(inum inum, fileinfo &fin) {
   int r = OK;
+  lc->acquire(inum);
 
   printf("getattr %016llx\n", inum);
   extent_protocol::attr a;
@@ -51,15 +53,17 @@ int yfs_client::getattr(inum inum, fileinfo &fin) {
   fin.mtime = a.mtime;
   fin.ctime = a.ctime;
   fin.size = a.size;
-  printf("getfile %016llx -> sz %llu\n", inum, fin.size);
+  printf("getfile %016llx -> sz %llu, mtime: %ld\n", inum, fin.size, fin.mtime);
 
 release:
 
+  lc->release(inum);
   return r;
 }
 
 int yfs_client::setattr(inum inum, struct stat &st) {
   int r = OK;
+  lc->acquire(inum);
 
   printf("setattr %016llx\n", inum);
   extent_protocol::attr a;
@@ -74,11 +78,14 @@ int yfs_client::setattr(inum inum, struct stat &st) {
 
 release:
 
+  lc->release(inum);
   return r;
 }
 
 int yfs_client::getdir(inum inum, dirinfo &din) {
   int r = OK;
+
+  lc->acquire(inum);
 
   printf("getdir %016llx\n", inum);
   extent_protocol::attr a;
@@ -91,6 +98,7 @@ int yfs_client::getdir(inum inum, dirinfo &din) {
   din.ctime = a.ctime;
 
 release:
+  lc->release(inum);
   return r;
 }
 
@@ -98,34 +106,46 @@ yfs_client::status yfs_client::create(inum parent, const std::string &name,
                                       unsigned long &new_id, bool is_file) {
   // check if parent exists
   std::string dir_content;
-  if (this->ec->get(parent, dir_content) != extent_protocol::OK)
+  lc->acquire(parent);
+  if (this->ec->get(parent, dir_content) != extent_protocol::OK) {
+    lc->release(parent);
     return yfs_client::NOENT;
+  }
 
   // create new empty file
-  new_id = lookup(parent, name);
+  new_id = lookup_locked(parent, name);
   if (new_id == 0) {
     this->ec->alloc_ino(0, new_id);
     if (is_file) {
       new_id |= 0x80000000;
     }
 
-    this->ec->put(new_id, "");
-
     // add file to parent directory
     dir_content += name + ',' + std::to_string(new_id) + ';';
     this->ec->put(parent, dir_content);
+
+    lc->acquire(new_id);
+    lc->release(parent);
+    this->ec->put(new_id, "");
+    lc->release(new_id);
+
+  } else {
+    // file already exists
+    lc->release(parent);
   }
 
   return yfs_client::OK;
 }
 
-yfs_client::inum yfs_client::lookup(inum di, std::string name) {
+// assume we hold the lock on di
+yfs_client::inum yfs_client::lookup_locked(inum di, std::string name) {
   if (!isdir(di))
     return 0;
 
   std::string dir_content;
-  if (this->ec->get(di, dir_content) != extent_protocol::OK)
+  if (this->ec->get(di, dir_content) != extent_protocol::OK) {
     return 0;
+  }
 
   char *token = std::strtok(const_cast<char *>(dir_content.c_str()), ";");
   while (token) {
@@ -139,19 +159,30 @@ yfs_client::inum yfs_client::lookup(inum di, std::string name) {
   return 0;
 }
 
-yfs_client::status yfs_client::unlink(inum parent, std::string name) {
+yfs_client::inum yfs_client::lookup(inum di, std::string name) {
+  if (!isdir(di))
+    return 0;
 
-  auto dirs = readdir(parent);
+  lc->acquire(di);
+  auto res = lookup_locked(di, name);
+  lc->release(di);
+  return res;
+}
+
+yfs_client::status yfs_client::unlink(inum parent, std::string name) {
+  lc->acquire(parent);
+  auto dirs = readdir_locked(parent);
   // find if the file exists
   auto it =
       std::find_if(dirs.begin(), dirs.end(),
                    [&name](const dirent &entry) { return entry.name == name; });
   if (it == dirs.end()) {
+    lc->release(parent);
     return yfs_client::NOENT;
   }
   inum inum = it->inum;
   if (isdir(inum)) {
-    // TODO: fix err code
+    lc->release(parent);
     return yfs_client::IOERR;
   }
 
@@ -164,13 +195,18 @@ yfs_client::status yfs_client::unlink(inum parent, std::string name) {
   }
   // update the parent directory
   this->ec->put(parent, dir_content);
+  // we hold parent lock, so it's safe to acquire child's lock
+  lc->acquire(inum);
+  lc->release(parent);
   this->ec->remove(inum);
+  lc->release(inum);
+
   return yfs_client::OK;
 }
 
-std::vector<yfs_client::dirent> yfs_client::readdir(inum dir) {
+// assume we hold the lock on di
+std::vector<yfs_client::dirent> yfs_client::readdir_locked(inum dir) {
   std::vector<dirent> res;
-
   std::string content;
   ec->get(dir, content);
 
@@ -195,6 +231,14 @@ std::vector<yfs_client::dirent> yfs_client::readdir(inum dir) {
   return res;
 }
 
+std::vector<yfs_client::dirent> yfs_client::readdir(inum dir) {
+  lc->acquire(dir);
+  std::vector<dirent> res = readdir_locked(dir);
+  lc->release(dir);
+
+  return res;
+}
+
 // content range by get: [0, content.size())
 // our range: [offset, offset + size)
 yfs_client::status yfs_client::read(inum fi, size_t size, off_t offset,
@@ -206,8 +250,11 @@ yfs_client::status yfs_client::read(inum fi, size_t size, off_t offset,
     return yfs_client::OK;
   }
 
+  lc->acquire(fi);
+
   std::string content;
   if (this->ec->get(fi, content) != yfs_client::OK) {
+    lc->release(fi);
     return yfs_client::NOENT;
   }
 
@@ -216,6 +263,7 @@ yfs_client::status yfs_client::read(inum fi, size_t size, off_t offset,
   } else if (static_cast<size_t>(offset) >= content.size()) {
     data = std::string();
   }
+  lc->release(fi);
 
   return yfs_client::OK;
 }
@@ -227,9 +275,13 @@ yfs_client::status yfs_client::write(inum fi, std::string &data, off_t offset) {
     return yfs_client::IOERR;
   }
 
+  lc->acquire(fi);
+
   std::string old_content;
-  if (this->ec->get(fi, old_content) != extent_protocol::OK)
+  if (this->ec->get(fi, old_content) != extent_protocol::OK) {
+    lc->release(fi);
     return yfs_client::NOENT;
+  }
 
   if (static_cast<size_t>(offset) <= old_content.size()) {
     if (offset + data.size() <= old_content.size()) {
@@ -245,6 +297,7 @@ yfs_client::status yfs_client::write(inum fi, std::string &data, off_t offset) {
   }
 
   this->ec->put(fi, old_content);
+  lc->release(fi);
 
   return yfs_client::OK;
 }

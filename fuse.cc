@@ -7,6 +7,7 @@
  */
 
 #include "yfs_client.h"
+#include <algorithm>
 #include <arpa/inet.h>
 #include <assert.h>
 #include <errno.h>
@@ -30,7 +31,7 @@ yfs_client::status getattr_helper(yfs_client::inum inum, struct stat &st) {
   bzero(&st, sizeof(st));
 
   st.st_ino = inum;
-  printf("getattr %016llx %d\n", inum, yfs->isfile(inum));
+  printf("getattr_helper %016llx %d\n", inum, yfs->isfile(inum));
   if (yfs->isfile(inum)) {
     yfs_client::fileinfo info;
     ret = yfs->getattr(inum, info);
@@ -100,7 +101,7 @@ void fuseserver_getattr(fuse_req_t req, fuse_ino_t ino,
 
 void fuseserver_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
                         int to_set, struct fuse_file_info *fi) {
-  printf("fuseserver_setattr 0x%x\n", to_set);
+  printf("fuseserver_setattr %ld", ino);
   yfs_client::inum inum = ino; // req->in.h.nodeid;
   struct stat st;
   yfs_client::status ret;
@@ -108,14 +109,20 @@ void fuseserver_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
     fuse_reply_err(req, ENOENT);
     return;
   }
+  printf("fuse before setattr: %016lx, size: %ld, atime: %ld, mtime: %ld\n",
+         ino, st.st_size, st.st_atime, st.st_mtime);
   if (FUSE_SET_ATTR_SIZE & to_set) {
-    printf("   fuseserver_setattr set size to %zu\n", attr->st_size);
     st.st_size = attr->st_size;
-    auto current_time = time(0);
-    st.st_atime = st.st_ctime = current_time;
+    auto current_time = std::max(time(0), st.st_mtime) + 1;
+    st.st_atime = current_time;
+    st.st_mtime = current_time;
+    st.st_ctime = current_time;
+    printf("   fuseserver_setattr set size to %zu, current time: %lu, time to "
+           "%lu\n",
+           attr->st_size, current_time, st.st_mtime);
   }
   if (FUSE_SET_ATTR_ATIME & to_set) {
-    printf("   fuseserver_setattr set atime to %zu\n", attr->st_atime);
+    printf("   fuseserveyr_setattr set atime to %zu\n", attr->st_atime);
     st.st_atime = attr->st_atime;
   }
   if (FUSE_SET_ATTR_MTIME & to_set) {
@@ -123,6 +130,16 @@ void fuseserver_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
     st.st_mtime = attr->st_mtime;
   }
   ret = yfs->setattr(inum, st);
+
+  {
+    struct stat st;
+    if (getattr_helper(inum, st) != yfs_client::OK) {
+      fuse_reply_err(req, ENOENT);
+      return;
+    }
+    printf("fuse after setattr: %016lx, size: %ld, atime: %ld, mtime: %ld\n",
+           ino, st.st_size, st.st_atime, st.st_mtime);
+  }
   if (ret != yfs_client::OK) {
     fuse_reply_err(req, ENOENT);
     return;
@@ -132,7 +149,7 @@ void fuseserver_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
 
 void fuseserver_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
                      struct fuse_file_info *fi) {
-  if (yfs->isfile(ino) && off >= 0) {
+  if (off >= 0) {
     std::string data;
     if (yfs->read(ino, size, off, data) == yfs_client::OK) {
       fuse_reply_buf(req, data.c_str(), size);
@@ -144,7 +161,7 @@ void fuseserver_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 
 void fuseserver_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
                       size_t size, off_t off, struct fuse_file_info *fi) {
-  if (yfs->isfile(ino) && off >= 0) {
+  if (off >= 0) {
     auto data = std::string(buf, size);
     if (yfs->write(ino, data, off) == yfs_client::OK) {
       fuse_reply_write(req, size);
@@ -249,7 +266,8 @@ void fuseserver_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 
 void fuseserver_open(fuse_req_t req, fuse_ino_t ino,
                      struct fuse_file_info *fi) {
-  if (fi->flags & (O_CREAT | O_WRONLY | O_RDWR | O_TRUNC)) {
+  printf("open ino: %016lx, flags: %u\n", ino, fi->flags);
+  if (fi->flags & (O_CREAT | O_WRONLY | O_RDWR)) {
     struct stat st;
     yfs_client::status ret = getattr_helper(ino, st);
     if (ret != yfs_client::OK) {
@@ -257,7 +275,7 @@ void fuseserver_open(fuse_req_t req, fuse_ino_t ino,
       return;
     }
     auto orig_mtime = st.st_mtime;
-    st.st_mtime = time(0);
+    st.st_mtime = time(0) + 1;
     yfs->setattr(ino, st);
 
     struct stat new_st;

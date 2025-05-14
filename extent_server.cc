@@ -4,6 +4,7 @@
 #include "extent_protocol.h"
 #include "slock.h"
 #include <cassert>
+#include <ctime>
 #include <fcntl.h>
 #include <pthread.h>
 #include <sstream>
@@ -82,7 +83,7 @@ int extent_server::setattr(extent_protocol::extentid_t id,
     store[id].attr.size = a.size;
     store[id].attr.atime = a.atime;
     store[id].attr.ctime = a.ctime;
-    store[id].attr.mtime = time(0);
+    store[id].attr.mtime = a.mtime;
     printf("after setattr: %016llx, size: %u, atime: %u, mtime: %u\n", id,
            store[id].attr.size, store[id].attr.atime, store[id].attr.mtime);
 
