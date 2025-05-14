@@ -76,11 +76,15 @@ int extent_server::setattr(extent_protocol::extentid_t id,
     return extent_protocol::NOENT;
   } else {
     // TODO: shall we check?
+    printf("before setattr: %016llx, size: %u, atime: %u, mtime: %u\n", id,
+           store[id].attr.size, store[id].attr.atime, store[id].attr.mtime);
     resize_item_data(id, a.size);
     store[id].attr.size = a.size;
     store[id].attr.atime = a.atime;
-    store[id].attr.mtime = a.mtime;
-    store[id].attr.ctime = time(0);
+    store[id].attr.ctime = a.ctime;
+    store[id].attr.mtime = time(0);
+    printf("after setattr: %016llx, size: %u, atime: %u, mtime: %u\n", id,
+           store[id].attr.size, store[id].attr.atime, store[id].attr.mtime);
 
     return extent_protocol::OK;
   }

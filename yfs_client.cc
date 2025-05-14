@@ -58,7 +58,7 @@ release:
   return r;
 }
 
-int yfs_client::setattr(inum inum, int to_set, struct stat &st) {
+int yfs_client::setattr(inum inum, struct stat &st) {
   int r = OK;
 
   printf("setattr %016llx\n", inum);
@@ -95,7 +95,7 @@ release:
 }
 
 yfs_client::status yfs_client::create(inum parent, const std::string &name,
-                                      unsigned long &new_id) {
+                                      unsigned long &new_id, bool is_file) {
   // check if parent exists
   std::string dir_content;
   if (this->ec->get(parent, dir_content) != extent_protocol::OK)
@@ -105,7 +105,10 @@ yfs_client::status yfs_client::create(inum parent, const std::string &name,
   new_id = lookup(parent, name);
   if (new_id == 0) {
     this->ec->alloc_ino(0, new_id);
-    new_id |= 0x80000000;
+    if (is_file) {
+      new_id |= 0x80000000;
+    }
+
     this->ec->put(new_id, "");
 
     // add file to parent directory
@@ -134,6 +137,35 @@ yfs_client::inum yfs_client::lookup(inum di, std::string name) {
     token = std::strtok(nullptr, ";");
   }
   return 0;
+}
+
+yfs_client::status yfs_client::unlink(inum parent, std::string name) {
+
+  auto dirs = readdir(parent);
+  // find if the file exists
+  auto it =
+      std::find_if(dirs.begin(), dirs.end(),
+                   [&name](const dirent &entry) { return entry.name == name; });
+  if (it == dirs.end()) {
+    return yfs_client::NOENT;
+  }
+  inum inum = it->inum;
+  if (isdir(inum)) {
+    // TODO: fix err code
+    return yfs_client::IOERR;
+  }
+
+  // filter it and rebuild the dir content
+  std::string dir_content;
+  for (const auto &entry : dirs) {
+    if (entry.name != name) {
+      dir_content += entry.name + ',' + std::to_string(entry.inum) + ';';
+    }
+  }
+  // update the parent directory
+  this->ec->put(parent, dir_content);
+  this->ec->remove(inum);
+  return yfs_client::OK;
 }
 
 std::vector<yfs_client::dirent> yfs_client::readdir(inum dir) {

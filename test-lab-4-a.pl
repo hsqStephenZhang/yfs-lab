@@ -213,6 +213,7 @@ sub checkmtime {
         oops1("CREATE did not change mtime");
     }
     if($st2[9] == $st3[9]){
+        print $st2[9], " ", $st3[9], "\n";
         oops1("WRITE did not change mtime");
     }
 }

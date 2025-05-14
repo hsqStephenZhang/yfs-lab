@@ -63,14 +63,15 @@ yfs_client::status getattr_helper(yfs_client::inum inum, struct stat &st) {
 // if the file is created successfully, will fill the inode number in e and
 // return OK
 yfs_client::status create_helper(fuse_ino_t parent, const char *name,
-                                 mode_t mode, struct fuse_entry_param *e) {
+                                 mode_t mode, struct fuse_entry_param *e,
+                                 bool is_file) {
 
   if (!yfs->isdir(parent)) {
     return yfs_client::NOENT;
   }
   unsigned long new_ino;
   // ignore the mode here
-  auto res = yfs->create(parent, name, new_ino);
+  auto res = yfs->create(parent, name, new_ino, is_file);
 
   if (res != yfs_client::OK) {
     return res;
@@ -78,6 +79,7 @@ yfs_client::status create_helper(fuse_ino_t parent, const char *name,
 
   e->ino = new_ino;
   getattr_helper(new_ino, e->attr);
+  printf("create_helper %s %016lx %ld\n", name, new_ino, e->attr.st_mtime);
 
   return yfs_client::OK;
 }
@@ -120,7 +122,7 @@ void fuseserver_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
     printf("   fuseserver_setattr set mtime to %zu\n", attr->st_mtime);
     st.st_mtime = attr->st_mtime;
   }
-  ret = yfs->setattr(inum, to_set, st);
+  ret = yfs->setattr(inum, st);
   if (ret != yfs_client::OK) {
     fuse_reply_err(req, ENOENT);
     return;
@@ -155,7 +157,7 @@ void fuseserver_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
 void fuseserver_create(fuse_req_t req, fuse_ino_t parent, const char *name,
                        mode_t mode, struct fuse_file_info *fi) {
   struct fuse_entry_param e;
-  if (create_helper(parent, name, mode, &e) == yfs_client::OK) {
+  if (create_helper(parent, name, mode, &e, true) == yfs_client::OK) {
     fuse_reply_create(req, &e, fi);
   } else {
     fuse_reply_err(req, ENOENT);
@@ -165,7 +167,7 @@ void fuseserver_create(fuse_req_t req, fuse_ino_t parent, const char *name,
 void fuseserver_mknod(fuse_req_t req, fuse_ino_t parent, const char *name,
                       mode_t mode, dev_t rdev) {
   struct fuse_entry_param e;
-  if (create_helper(parent, name, mode, &e) == yfs_client::OK) {
+  if (create_helper(parent, name, mode, &e, true) == yfs_client::OK) {
     fuse_reply_entry(req, &e);
   } else {
     fuse_reply_err(req, ENOENT);
@@ -247,19 +249,43 @@ void fuseserver_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 
 void fuseserver_open(fuse_req_t req, fuse_ino_t ino,
                      struct fuse_file_info *fi) {
+  if (fi->flags & (O_CREAT | O_WRONLY | O_RDWR | O_TRUNC)) {
+    struct stat st;
+    yfs_client::status ret = getattr_helper(ino, st);
+    if (ret != yfs_client::OK) {
+      fuse_reply_err(req, ENOENT);
+      return;
+    }
+    auto orig_mtime = st.st_mtime;
+    st.st_mtime = time(0);
+    yfs->setattr(ino, st);
+
+    struct stat new_st;
+    yfs_client::status ret2 = getattr_helper(ino, new_st);
+    if (ret2 != yfs_client::OK) {
+      fuse_reply_err(req, ENOENT);
+      return;
+    }
+
+    printf("update mtime %016lx, orig mtime: %ld, new mtime: %ld\n", ino,
+           orig_mtime, new_st.st_mtime);
+  }
   fuse_reply_open(req, fi);
 }
 
 void fuseserver_mkdir(fuse_req_t req, fuse_ino_t parent, const char *name,
                       mode_t mode) {
+  if (!yfs->isdir(parent)) {
+    fuse_reply_err(req, ENOTDIR);
+    return;
+  }
 
-  // You fill this in
-#if 0
   struct fuse_entry_param e;
-  fuse_reply_entry(req, &e);
-#else
-  fuse_reply_err(req, ENOSYS);
-#endif
+  if (create_helper(parent, name, mode, &e, false) == yfs_client::OK) {
+    fuse_reply_entry(req, &e);
+  } else {
+    fuse_reply_err(req, ENOSYS);
+  }
 }
 
 void fuseserver_unlink(fuse_req_t req, fuse_ino_t parent, const char *name) {
@@ -267,7 +293,21 @@ void fuseserver_unlink(fuse_req_t req, fuse_ino_t parent, const char *name) {
   // You fill this in
   // Success:	fuse_reply_err(req, 0);
   // Not found:	fuse_reply_err(req, ENOENT);
-  fuse_reply_err(req, ENOSYS);
+  if (!yfs->isdir(parent)) {
+    fuse_reply_err(req, ENOTDIR);
+    return;
+  }
+  auto res = yfs->unlink(parent, name);
+  if (res == yfs_client::OK) {
+    fuse_reply_err(req, 0);
+    return;
+  } else if (res == yfs_client::NOENT) {
+    fuse_reply_err(req, ENOENT);
+    return;
+  } else {
+    fuse_reply_err(req, ENOSYS);
+    return;
+  }
 }
 
 void fuseserver_statfs(fuse_req_t req) {

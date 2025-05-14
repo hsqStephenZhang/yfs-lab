@@ -40,9 +40,10 @@ public:
   bool isfile(inum);
   bool isdir(inum);
   inum lookup(inum di, std::string name);
+  yfs_client::status unlink(inum parent, std::string name);
 
   int getattr(inum, fileinfo &);
-  int setattr(inum, int, struct stat &);
+  int setattr(inum, struct stat &);
   int getdir(inum, dirinfo &);
   // inode num, data size, offset, data
   int read(inum, size_t, off_t, std::string &data);
@@ -50,7 +51,7 @@ public:
   int write(inum, std::string &, off_t);
   std::vector<dirent> readdir(inum);
   yfs_client::status create(inum parent, const std::string &name,
-                            unsigned long &);
+                            unsigned long &, bool);
   int getfile(inum, fileinfo &);
 };
 
