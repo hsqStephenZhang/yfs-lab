@@ -125,10 +125,9 @@ yfs_client::status yfs_client::create(inum parent, const std::string &name,
     this->ec->put(parent, dir_content);
 
     lc->acquire(new_id);
-    lc->release(parent);
     this->ec->put(new_id, "");
     lc->release(new_id);
-
+    lc->release(parent);
   } else {
     // file already exists
     lc->release(parent);
@@ -197,9 +196,9 @@ yfs_client::status yfs_client::unlink(inum parent, std::string name) {
   this->ec->put(parent, dir_content);
   // we hold parent lock, so it's safe to acquire child's lock
   lc->acquire(inum);
-  lc->release(parent);
   this->ec->remove(inum);
   lc->release(inum);
+  lc->release(parent);
 
   return yfs_client::OK;
 }
