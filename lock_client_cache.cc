@@ -2,238 +2,219 @@
 // see lock_client.cache.h for protocol details.
 
 #include "lock_client_cache.h"
-#include "lock_protocol.h"
 #include "rpc.h"
-#include "rpc/slock.h"
-#include "slock.h"
-#include <atomic>
+#include "tprintf.h"
 #include <iostream>
-#include <pthread.h>
 #include <sstream>
 #include <stdio.h>
 
-static void *releasethread(void *x) {
-  lock_client_cache *cc = (lock_client_cache *)x;
-  cc->releaser();
-  return 0;
-}
-
 int lock_client_cache::last_port = 0;
 
-lock_client_cache::lock_client_cache(std::string xdst,
-                                     class lock_release_user *_lu)
-    : lock_client(xdst), lu(_lu) {
-  srand(time(NULL) ^ last_port);
-  rlock_port = ((rand() % 32000) | (0x1 << 10));
+// 实现部分
+lock_client_cache::lock_client_cache(std::string xdst, 
+                                   class lock_release_user *_lu)
+  : lock_client(xdst), lu(_lu)
+{
+  srand(time(NULL)^last_port);
+  rlock_port = ((rand()%32000) | (0x1 << 10));
   const char *hname;
-  // assert(gethostname(hname, 100) == 0);
+  
+  // 获取主机名
   hname = "127.0.0.1";
   std::ostringstream host;
   host << hname << ":" << rlock_port;
   id = host.str();
   last_port = rlock_port;
+  
+  pthread_mutex_init(&m, NULL);
+  
+  // 启动RPC服务器用于接收revoke/retry回调
   rpcs *rlsrpc = new rpcs(rlock_port);
-  /* register RPC handlers with rlsrpc */
-  rlsrpc->reg(rlock_protocol::revoke, this, &lock_client_cache::revoke);
-  rlsrpc->reg(rlock_protocol::retry, this, &lock_client_cache::retry);
-  pthread_t th;
-  int r = pthread_create(&th, NULL, &releasethread, (void *)this);
-  pthread_mutex_init(&locks_mutex, NULL);
-  pthread_mutex_init(&release_mutex, NULL);
-  pthread_cond_init(&release_cond, NULL);
-  assert(r == 0);
+  rlsrpc->reg(rlock_protocol::revoke, this, &lock_client_cache::revoke_handler);
+  rlsrpc->reg(rlock_protocol::retry, this, &lock_client_cache::retry_handler);
 }
 
-void lock_client_cache::releaser() {
-
-  // This method should be a continuous loop, waiting to be notified of
-  // freed locks that have been revoked by the server, so that it can
-  // send a release RPC.
-  while (true) {
-    pthread_mutex_lock(&release_mutex);
-    while (!release_queue.empty()) {
-      auto lid = release_queue.front();
-      release_queue.pop();
-
-      lock_client_cache::lock_state &lock = this->get_lock(lid);
-      pthread_mutex_unlock(&lock.mutex);
-      /**
-        lock_protocol::status acquire(std::string clt, int seq_num,
-                                lock_protocol::lockid_t lid, int &r);
-        lock_protocol::status release(std::string clt, int seq_num,
-                                        lock_protocol::lockid_t lid, int &r);
-      */
-      auto tmp = 0;
-      auto clt = std::string(this->id);
-      this->cl->call(lock_protocol::release, clt, lock.seq_num, lid, tmp);
-      pthread_mutex_lock(&lock.mutex);
-      lock.status = lock_state::None; // reset the state
-      lock.reset(std::atomic_fetch_add(&this->seq_num, 1));
-      pthread_cond_broadcast(&lock.release_done);
-    }
-    pthread_cond_wait(&release_cond, &release_mutex);
+lock_client_cache::~lock_client_cache()
+{
+  pthread_mutex_destroy(&m);
+  for (auto& pair : locks) {
+    delete pair.second;
   }
 }
 
-lock_client_cache::lock_state &
-lock_client_cache::get_lock(lock_protocol::lockid_t lid) {
-  ScopedLock sl(&locks_mutex);
+lock_client_cache::lock_entry* 
+lock_client_cache::get_lock_entry(lock_protocol::lockid_t lid)
+{
+  if (locks.find(lid) == locks.end()) {
+    locks[lid] = new lock_entry();
+  }
+  return locks[lid];
+}
+
+void lock_client_cache::remove_lock_entry(lock_protocol::lockid_t lid)
+{
   auto it = locks.find(lid);
-  if (it == locks.end()) {
-    unsigned int seq_num = std::atomic_fetch_add(&this->seq_num, 1);
-    auto [inserted_it, success] = locks.emplace(lid, lock_state(seq_num));
-    return inserted_it->second;
+  if (it != locks.end()) {
+    delete it->second;
+    locks.erase(it);
   }
-  return it->second;
 }
 
-lock_protocol::status lock_client_cache::acquire(lock_protocol::lockid_t lid) {
-  lock_protocol::status ret;
-  lock_client_cache::lock_state &lock = this->get_lock(lid);
-  pthread_mutex_lock(&lock.mutex);
-  lock.debug();
-
+lock_protocol::status
+lock_client_cache::acquire(lock_protocol::lockid_t lid)
+{
+  pthread_mutex_lock(&m);
+  
+  lock_entry *entry = get_lock_entry(lid);
+  
   while (true) {
-  loop:
-    switch (lock.status) {
-    case lock_state::None:
-      lock.status = lock_state::Acquiring;
-    retry_rpc: {
-      pthread_mutex_unlock(&lock.mutex);
-      auto tmp = 0;
-      auto clt = std::string(this->id);
-      ret = this->cl->call(lock_protocol::acquire, clt, lock.seq_num, lid, tmp);
-      std::cout << "[DEBUG]: acquire rpc finished, res: " << ret << "\n"
-                << std::endl;
-      pthread_mutex_lock(&lock.mutex);
-    }
-      // 1. lock is issued by lock server
-      if (ret == lock_protocol::OK) {
-        lock.status = lock_state::Locked;
-        auto tid = pthread_self();
-        std::cout << "[DEBUG]: acquire lock " << lid
-                  << " successfully, owner thread id: " << tid << std::endl;
-        lock.owner_thread_id = tid;
-        goto release;
-      } else if (ret == lock_protocol::RETRY) {
-        // the lock is not allocated to us, wait for retry and continue the loop
-        // handle retry arrives before acquire returns
-        if (!lock.no_wait) {
-          pthread_cond_wait(&lock.retry_waiter, &lock.mutex);
-        } else {
-          // clear flag
-          lock.no_wait = false;
+    switch (entry->state) {
+      case NONE:
+        // 第一次获取此锁，需要从服务器获取
+        entry->state = ACQUIRING;
+        pthread_mutex_unlock(&m);
+        
+        {
+          int r;
+          lock_protocol::status ret = cl->call(lock_protocol::acquire, lid, id, r);
+          
+          pthread_mutex_lock(&m);
+          if (ret == lock_protocol::OK) {
+            entry->state = LOCKED;
+            entry->revoked = false;
+            entry->retry = false;
+            pthread_mutex_unlock(&m);
+            return lock_protocol::OK;
+          } else if (ret == lock_protocol::RETRY) {
+            // 服务器让我们稍后重试
+            entry->state = NONE;
+            while (!entry->retry && entry->state == NONE) {
+              pthread_cond_wait(&entry->state_cv, &m);
+            }
+            entry->retry = false;
+            continue;
+          } else {
+            entry->state = NONE;
+            pthread_mutex_unlock(&m);
+            return ret;
+          }
         }
-        goto retry_rpc;
-      } else {
-        // error
-        goto release;
-      }
-      // loop retry
-      goto loop;
-      // 2. lock is issued by local cache
-    case lock_state::Free:
-      lock.status = lock_state::Locked;
-      ret = lock_protocol::OK;
-      lock.owner_thread_id = pthread_self();
-      goto release;
-    case lock_state::Acquiring:
-    case lock_state::Locked:
-      if (lock.no_cache) {
-        pthread_cond_wait(&lock.release_done, &lock.mutex);
-      } else {
-        lock.local_waiter_cnt++;
-        pthread_cond_wait(&lock.local_waiter, &lock.mutex);
-        lock.local_waiter_cnt--;
-      }
-
-      // loop retry
-      goto loop;
-    case lock_state::Releasing:
-      pthread_cond_wait(&lock.release_done, &lock.mutex);
-      // loop retry
-      goto loop;
+        break;
+        
+      case FREE:
+        // 锁在本地缓存中且可用
+        entry->state = LOCKED;
+        pthread_mutex_unlock(&m);
+        return lock_protocol::OK;
+        
+      case LOCKED:
+      case ACQUIRING:
+      case RELEASING:
+        // 锁被占用或正在操作中，等待
+        {
+          pthread_cond_t cv;
+          pthread_cond_init(&cv, NULL);
+          entry->waiters.push_back(&cv);
+          
+          pthread_cond_wait(&cv, &m);
+          
+          entry->waiters.remove(&cv);
+          pthread_cond_destroy(&cv);
+        }
+        continue;
     }
   }
-
-release:
-  pthread_mutex_unlock(&lock.mutex);
-
-  return lock_protocol::RPCERR;
-}
-
-lock_protocol::status lock_client_cache::release(lock_protocol::lockid_t lid) {
-  lock_client_cache::lock_state &lock = this->get_lock(lid);
-  pthread_mutex_lock(&lock.mutex);
-
-  if (lock.owner_thread_id != pthread_self()) {
-    // this thread does not own the lock, return error
-    std::cout
-        << "[ERROR]: lock_client_cache::release: thread does not own the lock"
-        << std::endl;
-    pthread_mutex_unlock(&lock.mutex);
-    return lock_protocol::RPCERR;
-  }
-
-  if (lock.status == lock_state::Locked) {
-    lock.status = lock_state::Free;
-
-    if (lock.no_cache && lock.local_waiter_cnt == 0) {
-      lock.status = lock_state::Releasing;
-      pthread_mutex_lock(&release_mutex);
-      release_queue.push(lid);
-      pthread_cond_signal(&release_cond);
-      pthread_mutex_unlock(&release_mutex);
-    } else {
-      // TODO: local pending waiters first?
-      // we could also return the lock immediately and then let local waiters
-      // acquire the lock from server for better fairness
-      if (lock.no_cache) {
-        // signal the waiter
-        pthread_cond_signal(&lock.local_waiter);
-      } else if (lock.local_waiter_cnt > 0) {
-        pthread_mutex_lock(&release_mutex);
-        release_queue.push(lid);
-        pthread_cond_signal(&release_cond);
-        pthread_mutex_unlock(&release_mutex);
-      }
-    }
-  } else {
-    std::cout << "[ERROR]: lock_client_cache::release: lock is not locked"
-              << std::endl;
-  }
-
-  pthread_mutex_unlock(&lock.mutex);
+  
+  pthread_mutex_unlock(&m);
   return lock_protocol::OK;
 }
 
-// always return OK
-rlock_protocol::status lock_client_cache::retry(lock_protocol::lockid_t lid,
-                                                int &) {
-  lock_client_cache::lock_state &lock = this->get_lock(lid);
-  pthread_mutex_lock(&lock.mutex);
-  lock.no_wait = true;
+lock_protocol::status
+lock_client_cache::release(lock_protocol::lockid_t lid)
+{
+  pthread_mutex_lock(&m);
+  
+  auto it = locks.find(lid);
+  if (it == locks.end()) {
+    pthread_mutex_unlock(&m);
+    return lock_protocol::NOENT;
+  }
+  
+  lock_entry *entry = it->second;
+  
+  if (entry->state != LOCKED) {
+    pthread_mutex_unlock(&m);
+    return lock_protocol::NOENT;
+  }
+  
+  if (entry->revoked) {
+    // 服务器要求我们释放锁
+    entry->state = RELEASING;
+    pthread_mutex_unlock(&m);
+    
+    int r;
+    lock_protocol::status ret = cl->call(lock_protocol::release, lid, id, r);
+    
+    pthread_mutex_lock(&m);
+    if (ret == lock_protocol::OK) {
+      entry->state = NONE;
+      entry->revoked = false;
+      
+      // 唤醒等待的线程
+      for (auto& cv : entry->waiters) {
+        pthread_cond_signal(cv);
+      }
+      pthread_cond_signal(&entry->state_cv);
+    }
+  } else {
+    // 本地释放，保持在缓存中
+    entry->state = FREE;
+    
+    // 唤醒一个等待的线程
+    if (!entry->waiters.empty()) {
+      pthread_cond_signal(entry->waiters.front());
+    }
+  }
+  
+  pthread_mutex_unlock(&m);
+  return lock_protocol::OK;
+}
 
-  pthread_cond_signal(&lock.retry_waiter);
-  pthread_mutex_unlock(&lock.mutex);
+rlock_protocol::status
+lock_client_cache::revoke_handler(lock_protocol::lockid_t lid, int &)
+{
+  pthread_mutex_lock(&m);
+  
+  lock_entry *entry = get_lock_entry(lid);
+  entry->revoked = true;
+  
+  if (entry->state == FREE) {
+    // 锁当前未被使用，立即释放给服务器
+    entry->state = RELEASING;
+    pthread_mutex_unlock(&m);
+    
+    int r;
+    cl->call(lock_protocol::release, lid, id, r);
+    
+    pthread_mutex_lock(&m);
+    entry->state = NONE;
+    entry->revoked = false;
+    pthread_cond_signal(&entry->state_cv);
+  }
+  
+  pthread_mutex_unlock(&m);
   return rlock_protocol::OK;
 }
 
-// always return OK
-rlock_protocol::status lock_client_cache::revoke(lock_protocol::lockid_t lid,
-                                                 int &) {
-  lock_client_cache::lock_state &lock = this->get_lock(lid);
-  pthread_mutex_lock(&lock.mutex);
-  // handle out of order of revoke
-  lock.no_cache = true;
-  if (lock.status == lock_state::Free) {
-    lock.status = lock_state::Releasing;
-    pthread_mutex_lock(&release_mutex);
-    release_queue.push(lid);
-    pthread_cond_signal(&release_cond);
-    pthread_mutex_unlock(&release_mutex);
-  }
-  pthread_mutex_unlock(&lock.mutex);
-
+rlock_protocol::status
+lock_client_cache::retry_handler(lock_protocol::lockid_t lid, int &)
+{
+  pthread_mutex_lock(&m);
+  
+  lock_entry *entry = get_lock_entry(lid);
+  entry->retry = true;
+  pthread_cond_signal(&entry->state_cv);
+  
+  pthread_mutex_unlock(&m);
   return rlock_protocol::OK;
 }
