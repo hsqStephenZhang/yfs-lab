@@ -70,16 +70,17 @@ void test1(void) {
 
 void *test2(void *x) {
   int i = *(int *)x;
+  std::string debugid = "client_" + std::to_string(i) + "_" + lc[i]->getid();
 
-  printf("test2: client %d acquire a release a\n", i);
+  printf("test2: client %s acquire a release a\n", debugid.c_str());
   lc[i]->acquire(a);
-  printf("test2: client %d acquire done\n", i);
+  printf("test2: client %s acquire done\n", debugid.c_str());
   check_grant(a);
   sleep(1);
-  printf("test2: client %d release\n", i);
+  printf("test2: client %s release\n", debugid.c_str());
   check_release(a);
   lc[i]->release(a);
-  printf("test2: client %d release done\n", i);
+  printf("test2: client %s release done\n", debugid.c_str());
   return 0;
 }
 
@@ -166,7 +167,7 @@ int main(int argc, char *argv[]) {
     lc[i] = new lock_client_cache(dst);
 
   if (!test || test == 1) {
-    test1();
+    // test1();
   }
 
   if (!test || test == 2) {

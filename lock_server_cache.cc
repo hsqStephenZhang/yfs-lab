@@ -46,7 +46,9 @@ rpcc *lock_server_cache::get_client_connection(const std::string &client_id) {
     sockaddr_in dstsock;
     make_sockaddr(client_id.c_str(), &dstsock);
 
-    clients[client_id] = new rpcc(dstsock);
+    auto client = new rpcc(dstsock);
+    client->bind();
+    clients[client_id] = client;
   }
 
   return clients[client_id];
@@ -58,7 +60,9 @@ void lock_server_cache::send_revoke(lock_protocol::lockid_t lid,
   if (client) {
     int r;
     // 异步发送revoke消息
-    client->call(rlock_protocol::revoke, lid, r);
+    int res = client->call(rlock_protocol::revoke, lid, r);
+    std::cout << "Sent revoke for lock " << lid << " to client " << client_id 
+              << ", result: " << res << std::endl;
   }
 }
 
@@ -68,7 +72,9 @@ void lock_server_cache::send_retry(lock_protocol::lockid_t lid,
   if (client) {
     int r;
     // 异步发送retry消息
-    client->call(rlock_protocol::retry, lid, r);
+    int res = client->call(rlock_protocol::retry, lid, r);
+    std::cout << "Sent retry for lock " << lid << " to client " << client_id 
+              << ", result: " << res << std::endl;
   }
 }
 
@@ -97,17 +103,23 @@ lock_protocol::status lock_server_cache::acquire(lock_protocol::lockid_t lid,
     entry->revoke_sent = false;
     nacquire++;
     pthread_mutex_unlock(&m);
+    std::cout << "Lock acquired by " << id << " for lock " << lid << std::endl;
     return lock_protocol::OK;
 
   case LOCKED_SERVER:
     if (entry->owner == id) {
       // 同一客户端重复请求
       pthread_mutex_unlock(&m);
+      std::cout << "Lock re-enter by " << id << " for lock " << lid
+                << std::endl;
       return lock_protocol::OK;
     }
 
     // 锁被其他客户端占用
     entry->waiters.push(id);
+    std::cout << "Lock " << lid << " is already held by " << entry->owner
+              << ", adding " << id << " to waiters."
+              << ", first wait: " << !entry->revoke_sent << std::endl;
 
     if (!entry->revoke_sent) {
       // 第一次有人等待，发送revoke给当前拥有者
@@ -132,6 +144,8 @@ lock_protocol::status lock_server_cache::acquire(lock_protocol::lockid_t lid,
 lock_protocol::status lock_server_cache::release(lock_protocol::lockid_t lid,
                                                  std::string id, int &r) {
   pthread_mutex_lock(&m);
+  std::cout << "Attempting to release lock " << lid << " by client " << id
+            << std::endl;
 
   auto it = locks.find(lid);
   if (it == locks.end()) {
@@ -141,7 +155,11 @@ lock_protocol::status lock_server_cache::release(lock_protocol::lockid_t lid,
 
   server_lock_entry *entry = it->second;
 
+  std::cout << "Releasing lock " << lid << " held by " << id << std::endl;
+  
   if (entry->state != LOCKED_SERVER || entry->owner != id) {
+    std::cout << "Lock " << lid << " is not held by " << id
+              << ", current owner: " << entry->owner << std::endl;
     pthread_mutex_unlock(&m);
     return lock_protocol::NOENT;
   }
@@ -151,6 +169,7 @@ lock_protocol::status lock_server_cache::release(lock_protocol::lockid_t lid,
     entry->state = FREE_SERVER;
     entry->owner = "";
     entry->revoke_sent = false;
+    std::cout << "Lock " << lid << " is now free." << std::endl;
   } else {
     // 有等待者，将锁分配给下一个等待者
     std::string next_client = entry->waiters.front();
