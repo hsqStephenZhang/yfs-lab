@@ -7,6 +7,8 @@
 #include <map>
 #include <list>
 
+using namespace std;
+
 // 锁状态枚举
 enum lock_state {
     NONE,       // 没有锁
@@ -36,6 +38,11 @@ class lock_client_cache : public lock_client {
     ~lock_entry() {
       pthread_cond_destroy(&state_cv);
       pthread_cond_destroy(&thread_cv);
+    }
+
+    void setState(lock_state new_state, std::string msg = "") {
+      std::cout << "Setting state from " << state << " to " << new_state << ", msg:" << msg << std::endl;
+      this->state = new_state;
     }
   };
 

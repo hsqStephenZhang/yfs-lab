@@ -66,7 +66,7 @@ lock_protocol::status lock_client_cache::acquire(lock_protocol::lockid_t lid) {
     switch (entry->state) {
     case NONE:
       // 第一次获取此锁，需要从服务器获取
-      entry->state = ACQUIRING;
+      entry->setState(ACQUIRING);
       pthread_mutex_unlock(&m);
 
       {
@@ -76,7 +76,7 @@ lock_protocol::status lock_client_cache::acquire(lock_protocol::lockid_t lid) {
 
         pthread_mutex_lock(&m);
         if (ret == lock_protocol::OK) {
-          entry->state = LOCKED;
+          entry->setState(LOCKED);
           entry->revoked = false;
           entry->retry = false;
           std::cout << "Lock " << lid << " acquired by client " << id
@@ -85,14 +85,14 @@ lock_protocol::status lock_client_cache::acquire(lock_protocol::lockid_t lid) {
           return lock_protocol::OK;
         } else if (ret == lock_protocol::RETRY) {
           // 服务器让我们稍后重试
-          entry->state = NONE;
+          entry->setState(NONE);
           while (!entry->retry && entry->state == NONE) {
             pthread_cond_wait(&entry->state_cv, &m);
           }
           entry->retry = false;
           continue;
         } else {
-          entry->state = NONE;
+          entry->setState(NONE);
           pthread_mutex_unlock(&m);
           return ret;
         }
@@ -101,7 +101,7 @@ lock_protocol::status lock_client_cache::acquire(lock_protocol::lockid_t lid) {
 
     case FREE:
       // 锁在本地缓存中且可用
-      entry->state = LOCKED;
+      entry->setState(LOCKED);
       pthread_mutex_unlock(&m);
       return lock_protocol::OK;
 
@@ -146,7 +146,7 @@ lock_protocol::status lock_client_cache::release(lock_protocol::lockid_t lid) {
 
   if (entry->revoked) {
     // 服务器要求我们释放锁
-    entry->state = RELEASING;
+    entry->setState(RELEASING);
     pthread_mutex_unlock(&m);
 
     int r;
@@ -156,7 +156,7 @@ lock_protocol::status lock_client_cache::release(lock_protocol::lockid_t lid) {
 
     pthread_mutex_lock(&m);
     if (ret == lock_protocol::OK) {
-      entry->state = NONE;
+      entry->setState(NONE);
       entry->revoked = false;
 
       // 唤醒等待的线程
@@ -168,7 +168,7 @@ lock_protocol::status lock_client_cache::release(lock_protocol::lockid_t lid) {
   } else {
     // 本地释放，保持在缓存中
     std::cout << "lock_client_cache::release: cache release result of " << lid << std::endl;
-    entry->state = FREE;
+    entry->setState(FREE);
 
     // 唤醒一个等待的线程
     if (!entry->waiters.empty()) {
@@ -191,7 +191,7 @@ lock_client_cache::revoke_handler(lock_protocol::lockid_t lid, int &) {
 
   if (entry->state == FREE) {
     // 锁当前未被使用，立即释放给服务器
-    entry->state = RELEASING;
+    entry->setState(RELEASING);
     std::cout << "Releasing lock " << lid << " immediately." << std::endl;
     pthread_mutex_unlock(&m);
 
@@ -201,9 +201,11 @@ lock_client_cache::revoke_handler(lock_protocol::lockid_t lid, int &) {
               << " released by client " << id << ", res: " << res << std::endl;
 
     pthread_mutex_lock(&m);
-    entry->state = NONE;
+    entry->setState(NONE);
     entry->revoked = false;
     pthread_cond_signal(&entry->state_cv);
+  } else{
+    std::cout << "Lock " << lid << " is currently in use, waiting for release." << std::endl;
   }
 
   pthread_mutex_unlock(&m);
