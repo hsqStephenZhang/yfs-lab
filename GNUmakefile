@@ -194,3 +194,7 @@ clean :
 
 extent_server_test: extent_server_test.o extent_server.o rpc/librpc.a
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS) $(GTEST_LIBS)
+
+
+lock_cache_test: lock_cache_test.o lock_client_cache.o lock_server_cache.o lock_client.o lock_server.o rpc/librpc.a
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS) $(GTEST_LIBS)

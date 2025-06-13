@@ -22,6 +22,15 @@ public:
   virtual ~lock_release_user() {};
 };
 
+class dummy_lock_release_user : public lock_release_user {
+public:
+  void dorelease(lock_protocol::lockid_t) override {
+    printf("DUMMY dorelease called\n");
+    // do nothing
+  }
+  ~dummy_lock_release_user() {};
+};
+
 // SUGGESTED LOCK CACHING IMPLEMENTATION PLAN:
 //
 // to work correctly for lab 7,  all the requests on the server run till
@@ -101,12 +110,12 @@ class lock_client_cache : public lock_client {
     // handle server revoke cmd out of order
     bool no_cache;
     // handle server retry cmd out of order
-    bool no_wait;
+    bool retry_token;
     unsigned int seq_num;
 
     lock_state(int seq_num)
         : local_waiter_cnt(0), status(None), owner_thread_id(0),
-          no_cache(false), no_wait(false), seq_num(seq_num) {
+          no_cache(false), retry_token(false), seq_num(seq_num) {
       pthread_mutex_init(&mutex, NULL);
       pthread_cond_init(&local_waiter, NULL);
       pthread_cond_init(&retry_waiter, NULL);
@@ -120,13 +129,13 @@ class lock_client_cache : public lock_client {
       this->seq_num = seq_num;
     }
 
-    void debug() {
-      std::cout << "[DEBUG]: lock_state debug info: \n" << std::endl;
-      std::cout << "lock_state status: " << status
+    void debug(const char *id) {
+      printf("[CLIENT-%s]lock_state debug info:\n", id);
+      std::cout << "status: " << status
                 << ", owner_thread_id: " << owner_thread_id
                 << ", local_waiter_cnt: " << local_waiter_cnt
                 << ", no_cache: " << no_cache
-                << ", no_wait: " << no_wait
+                << ", no_wait: " << retry_token
                 << ", seq_num: " << seq_num << std::endl;
     }
 
@@ -155,10 +164,15 @@ public:
   virtual ~lock_client_cache() {};
   lock_client_cache::lock_state &get_lock(lock_protocol::lockid_t);
   lock_protocol::status acquire(lock_protocol::lockid_t);
-  virtual lock_protocol::status release(lock_protocol::lockid_t);
+  lock_protocol::status release(lock_protocol::lockid_t);
+  std::string get_id() {
+    return this->id;
+  }
+  void print_id() {
+    std::cout << "[CLIENT-" << this->id << "]";
+  }
 
   rlock_protocol::status retry(lock_protocol::lockid_t, int &);
   rlock_protocol::status revoke(lock_protocol::lockid_t, int &);
-  void releaser();
 };
 #endif

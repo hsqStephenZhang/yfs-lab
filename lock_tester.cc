@@ -3,16 +3,18 @@
 //
 
 #include "lock_client.h"
+#include "lock_client_cache.h"
 #include "lock_protocol.h"
 #include <arpa/inet.h>
+#include <pthread.h>
 #include <stdio.h>
-#include "lock_client_cache.h"
 
 // must be >= 2
-const int nt = 10; // XXX: lab1's rpc handlers are blocking. Since rpcs uses a thread
-             // pool of 10 threads, we cannot test more than 10 blocking rpc.
+const int nt =
+    10; // XXX: lab1's rpc handlers are blocking. Since rpcs uses a thread
+        // pool of 10 threads, we cannot test more than 10 blocking rpc.
 std::string dst;
-lock_client_cache **lc = new lock_client_cache * [nt];
+lock_client_cache **lc = new lock_client_cache *[nt];
 lock_protocol::lockid_t a = 1;
 lock_protocol::lockid_t b = 2;
 lock_protocol::lockid_t c = 3;
@@ -73,13 +75,13 @@ void *test2(void *x) {
 
   printf("test2: client %d acquire a release a\n", i);
   lc[i]->acquire(a);
-  printf("test2: client %d acquire done\n", i);
+  printf("test2: client %d acquire done, thread id: %ld\n", i, pthread_self());
   check_grant(a);
   sleep(1);
   printf("test2: client %d release\n", i);
   check_release(a);
   lc[i]->release(a);
-  printf("test2: client %d release done\n", i);
+  printf("test2: client %d release done, thread id: %ld\n", i, pthread_self());
   return 0;
 }
 
@@ -176,14 +178,8 @@ int main(int argc, char *argv[]) {
       r = pthread_create(&th[i], NULL, test2, (void *)a);
       assert(r == 0);
     }
-
-    assert(pthread_mutex_init(&count_mutex, NULL) == 0);
-
-    printf("cache lock client\n");
-    for (int i = 0; i < nt; i++) lc[i] = new lock_client_cache(dst);
-
-    if(!test || test == 1){
-      test1();
+    for (int i = 0; i < nt; i++) {
+      pthread_join(th[i], NULL);
     }
   }
 

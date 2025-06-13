@@ -38,13 +38,13 @@ public:
   cached_lock() : state(FREED), clt(""), waiters({}) {}
 
   void debug() {
-    std::cout << "[DEBUG]: cached_lock debug info: \n" << std::endl;
-    std::cout << "cached_lock state: " << state << ", clt: " << clt
+    std::cout << "[SERVER] cached_lock debug info:" << std::endl;
+    std::cout << "[SERVER] cached_lock state: " << state << ", clt: " << clt
               << ", waiters: ";
     for (const auto &w : waiters) {
       std::cout << w << " ";
     }
-    std::cout << std::endl;
+    std::cout << std::endl << std::endl;
   }
 };
 
@@ -70,8 +70,8 @@ public:
   lock_protocol::status release(std::string clt, int seq_num,
                                 lock_protocol::lockid_t lid, int &r);
 
-  pthread_cond_t revoke_ready;
-  pthread_cond_t retry_ready;
+  pthread_cond_t revoke_queue_ready;
+  pthread_cond_t retry_queue_ready;
   // first in first out
   std::queue<std::pair<lock_protocol::lockid_t, std::string>> revoke_queue;
   // first in first out

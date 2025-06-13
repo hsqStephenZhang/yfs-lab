@@ -41,6 +41,17 @@
             "externalConsole": false,
             "MIMode": "gdb",
             "preLaunchTask": "build",
+        },
+        {
+            "name": "lock_cache_test",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/lock_cache_test",
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
         }
     ]
 }
