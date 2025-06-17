@@ -6,6 +6,7 @@
  * high-level interface only gives us complete paths.
  */
 
+#include "now.h"
 #include "yfs_client.h"
 #include <algorithm>
 #include <arpa/inet.h>
@@ -14,6 +15,7 @@
 #include <fcntl.h>
 #include <fuse/fuse_lowlevel.h>
 #include <fuse_lowlevel.h>
+#include <atomic>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -99,9 +101,12 @@ void fuseserver_getattr(fuse_req_t req, fuse_ino_t ino,
   fuse_reply_attr(req, &st, 0);
 }
 
+std::atomic<unsigned long> local_req_id{0};
+
 void fuseserver_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
                         int to_set, struct fuse_file_info *fi) {
-  printf("fuseserver_setattr %ld", ino);
+  unsigned long local_id = atomic_fetch_add(&local_req_id, 1);
+  printf("[FUSE][SETATTR-%ld] %016lx\n", local_id, ino);
   yfs_client::inum inum = ino; // req->in.h.nodeid;
   struct stat st;
   yfs_client::status ret;
@@ -109,24 +114,30 @@ void fuseserver_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
     fuse_reply_err(req, ENOENT);
     return;
   }
-  printf("fuse before setattr: %016lx, size: %ld, atime: %ld, mtime: %ld\n",
-         ino, st.st_size, st.st_atime, st.st_mtime);
+  printf(
+      "[FUSE][SETATTR-%ld] before: %016lx, size: %ld, atime: %ld, mtime: %ld\n",
+      local_id, ino, st.st_size, st.st_atime, st.st_mtime);
+  printf("[FUSE][SETATTR-%ld] attr to set: size: %d, atime: %d, mtime: %d\n",
+         local_id, (to_set & FUSE_SET_ATTR_SIZE) != 0,
+         (to_set & FUSE_SET_ATTR_ATIME) != 0,
+         (to_set & FUSE_SET_ATTR_MTIME) != 0);
   if (FUSE_SET_ATTR_SIZE & to_set) {
+    auto origin_mtime = st.st_mtime;
     st.st_size = attr->st_size;
-    auto current_time = std::max(time(0), st.st_mtime) + 1;
+    auto current_time = get_now();
     st.st_atime = current_time;
     st.st_mtime = current_time;
     st.st_ctime = current_time;
-    printf("   fuseserver_setattr set size to %zu, current time: %lu, time to "
-           "%lu\n",
-           attr->st_size, current_time, st.st_mtime);
+    printf("[FUSE][SETATTR-%ld] set size to %zu, original mtime: %lu, new "
+           "mtime:%lu\n",
+           local_id, attr->st_size, origin_mtime, st.st_mtime);
   }
   if (FUSE_SET_ATTR_ATIME & to_set) {
-    printf("   fuseserveyr_setattr set atime to %zu\n", attr->st_atime);
+    printf("[FUSE][SETATTR-%ld] set atime to %zu\n", local_id, attr->st_atime);
     st.st_atime = attr->st_atime;
   }
   if (FUSE_SET_ATTR_MTIME & to_set) {
-    printf("   fuseserver_setattr set mtime to %zu\n", attr->st_mtime);
+    printf("[FUSE][SETATTR-%ld] set mtime to %zu\n", local_id, attr->st_mtime);
     st.st_mtime = attr->st_mtime;
   }
   ret = yfs->setattr(inum, st);
@@ -137,7 +148,7 @@ void fuseserver_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
       fuse_reply_err(req, ENOENT);
       return;
     }
-    printf("fuse after setattr: %016lx, size: %ld, atime: %ld, mtime: %ld\n",
+    printf("[FUSE][SETATTR-%ld] after: %016lx, size: %ld, atime: %ld, mtime: %ld\n",local_id,
            ino, st.st_size, st.st_atime, st.st_mtime);
   }
   if (ret != yfs_client::OK) {
@@ -161,6 +172,8 @@ void fuseserver_read(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 
 void fuseserver_write(fuse_req_t req, fuse_ino_t ino, const char *buf,
                       size_t size, off_t off, struct fuse_file_info *fi) {
+  unsigned long local_id = atomic_fetch_add(&local_req_id, 1);
+  printf("[FUSE][WRITE-%ld] %016lx\n", local_id, ino);
   if (off >= 0) {
     auto data = std::string(buf, size);
     if (yfs->write(ino, data, off) == yfs_client::OK) {
@@ -232,8 +245,7 @@ void dirbuf_add(struct dirbuf *b, const char *name, fuse_ino_t ino) {
 #define min(x, y) ((x) < (y) ? (x) : (y))
 
 int reply_buf_limited(fuse_req_t req, const char *buf, size_t bufsize,
-          off_t off, size_t maxsize)
-{
+                      off_t off, size_t maxsize) {
   if ((size_t)off < bufsize)
     return fuse_reply_buf(req, buf + off, min(bufsize - off, maxsize));
   else
@@ -276,7 +288,7 @@ void fuseserver_open(fuse_req_t req, fuse_ino_t ino,
       return;
     }
     auto orig_mtime = st.st_mtime;
-    st.st_mtime = time(0) + 1;
+    st.st_mtime = get_now();
     yfs->setattr(ino, st);
 
     struct stat new_st;

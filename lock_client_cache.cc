@@ -164,7 +164,9 @@ lock_protocol::status lock_client_cache::release(lock_protocol::lockid_t lid) {
       pthread_mutex_unlock(&lock.mutex);
       auto tmp = 0;
       auto clt = std::string(this->id);
-      this->lu->dorelease(lid);
+      if (this->lu) {
+        this->lu->dorelease(lid);
+      }
       this->cl->call(lock_protocol::release, clt, lock.seq_num, lid, tmp);
       pthread_mutex_lock(&lock.mutex);
       lock.status = lock_state::None; // reset the state
@@ -184,10 +186,15 @@ lock_protocol::status lock_client_cache::release(lock_protocol::lockid_t lid) {
   return lock_protocol::OK;
 }
 
+lock_protocol::status lock_client_cache::stat(lock_protocol::lockid_t lid) {
+  return lock_protocol::OK;
+}
+
 // always return OK
 rlock_protocol::status lock_client_cache::retry(lock_protocol::lockid_t lid,
                                                 int &) {
-  lock_client_cache::lock_state &lock = this->get_lock(lid);
+  lock_client_cache::lock_state &lock = this->get_lock
+  (lid);
   pthread_mutex_lock(&lock.mutex);
   lock.retry_token = true;
   printf("[CLIENT-%s] retry of lock: %lld, status: %d, local_waiter_cnt: %d\n",
@@ -212,7 +219,9 @@ rlock_protocol::status lock_client_cache::revoke(lock_protocol::lockid_t lid,
     pthread_mutex_unlock(&lock.mutex);
     auto tmp = 0;
     auto clt = std::string(this->id);
-    this->lu->dorelease(lid);
+    if (this->lu) {
+      this->lu->dorelease(lid);
+    }
     this->cl->call(lock_protocol::release, clt, lock.seq_num, lid, tmp);
     pthread_mutex_lock(&lock.mutex);
     lock.status = lock_state::None; // reset the state

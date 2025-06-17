@@ -3,6 +3,7 @@
 #include "extent_server.h"
 #include "extent_protocol.h"
 #include "slock.h"
+#include "now.h"
 #include <cassert>
 #include <ctime>
 #include <fcntl.h>
@@ -19,7 +20,7 @@ int extent_server::put(extent_protocol::extentid_t id, std::string buf,
   printf("[put] id: %016llx\n", id);
 
   extent_protocol::attr a;
-  auto now = time(0);
+  auto now = get_now();
   a.atime = a.ctime = a.mtime = now;
   a.size = buf.size();
   if (this->store.find(id) != this->store.end()) {
@@ -43,7 +44,7 @@ int extent_server::get(extent_protocol::extentid_t id, std::string &buf) {
 
   if (this->store.find(id) != this->store.end()) {
     buf = this->store[id].data;
-    this->store[id].attr.atime = time(0);
+    this->store[id].attr.atime = get_now();
     printf("[get] data: %s\n", buf.c_str());
     return extent_protocol::OK;
   } else {

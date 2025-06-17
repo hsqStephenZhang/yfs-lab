@@ -163,6 +163,7 @@ public:
   lock_client_cache(std::string xdst, class lock_release_user *l = 0);
   virtual ~lock_client_cache() {};
   lock_client_cache::lock_state &get_lock(lock_protocol::lockid_t);
+  lock_protocol::status stat(lock_protocol::lockid_t);
   lock_protocol::status acquire(lock_protocol::lockid_t);
   lock_protocol::status release(lock_protocol::lockid_t);
   std::string get_id() {

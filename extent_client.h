@@ -8,20 +8,20 @@
 #include <string>
 
 class extent_client {
-private:
+protected:
   rpcc *cl;
 
 public:
   extent_client(std::string dst);
 
-  extent_protocol::status get(extent_protocol::extentid_t eid,
+  virtual extent_protocol::status get(extent_protocol::extentid_t eid,
                               std::string &buf);
-  extent_protocol::status getattr(extent_protocol::extentid_t eid,
+  virtual extent_protocol::status getattr(extent_protocol::extentid_t eid,
                                   extent_protocol::attr &a);
-  extent_protocol::status setattr(extent_protocol::extentid_t eid,
+  virtual extent_protocol::status setattr(extent_protocol::extentid_t eid,
                                   extent_protocol::attr a);
-  extent_protocol::status put(extent_protocol::extentid_t eid, std::string buf);
-  extent_protocol::status remove(extent_protocol::extentid_t eid);
+  virtual extent_protocol::status put(extent_protocol::extentid_t eid, std::string buf);
+  virtual extent_protocol::status remove(extent_protocol::extentid_t eid);
   extent_protocol::status alloc_ino(extent_protocol::extentid_t id,
                                     unsigned long &);
 };

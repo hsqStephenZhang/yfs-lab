@@ -83,6 +83,11 @@ lock_server+= $(rsm_files)
 endif
 lock_server : $(patsubst %.cc,%.o,$(lock_server)) rpc/librpc.a
 
+extent_client_cache=
+ifeq ($(LAB6GE),1)
+extent_client_cache+=extent_client_cache.cc
+endif
+
 yfs_client=yfs_client.cc extent_client.cc fuse.cc
 ifeq ($(LAB4GE),1)
 yfs_client += lock_client.cc
@@ -92,6 +97,9 @@ yfs_client += rsm_client.cc
 endif
 ifeq ($(LAB5GE),1)
 yfs_client += lock_client_cache.cc
+endif
+ifeq ($(LAB6GE),1)
+yfs_client += extent_client_cache.cc
 endif
 yfs_client : $(patsubst %.cc,%.o,$(yfs_client)) rpc/librpc.a
 
@@ -158,7 +166,7 @@ l5-sol:
 
 
 l6:
-	./mklab.pl 6 0 l6 GNUmakefile test-lab-4-a.pl $(rpclib) $(yfs_client) $(rpctest) $(lock_server)\
+	./mklab.pl 6 0 l6 GNUmakefile test-lab-4-a.pl $(rpclib) $(yfs_client) $(rpctest) $(lock_server) $(extent_client_cache)\
 	 $(extent_server) $(lock_server) start.sh stop.sh test-lab-2.pl mkfs.sh\
 	 $(hfiles1) $(hfiles2) $(hfiles3) $(lock_tester) $(test-lab-4-b) $(test-lab-4-c)
 
