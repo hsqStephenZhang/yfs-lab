@@ -4,6 +4,8 @@
 lock_demo
 extent_server
 extent_server_test
+extent_client_cache_test
+lock_cache_test
 yfs_client
 lock_server
 lock_tester

@@ -66,7 +66,7 @@ lock_protocol::status lock_client_cache::acquire(lock_protocol::lockid_t lid) {
       pthread_mutex_unlock(&lock.mutex);
       auto tmp = 0;
       auto clt = std::string(this->id);
-      printf("[CLIENT-%s]acquire LOCK-%lld to server\n", this->id.c_str(), lid);
+      printf("[CLIENT-%s]acquire LOCK-%lld from server\n", this->id.c_str(), lid);
       ret = this->cl->call(lock_protocol::acquire, clt, lock.seq_num, lid, tmp);
       printf("[CLIENT-%s]acquire LOCK-%lld rpc returned %d\n", this->id.c_str(),
              lid, ret);
@@ -197,7 +197,7 @@ rlock_protocol::status lock_client_cache::retry(lock_protocol::lockid_t lid,
   (lid);
   pthread_mutex_lock(&lock.mutex);
   lock.retry_token = true;
-  printf("[CLIENT-%s] retry of lock: %lld, status: %d, local_waiter_cnt: %d\n",
+  printf("[CLIENT-%s]retry of lock: %lld, status: %d, local_waiter_cnt: %d\n",
          this->id.c_str(), lid, lock.status, lock.local_waiter_cnt);
 
   pthread_cond_signal(&lock.retry_waiter);

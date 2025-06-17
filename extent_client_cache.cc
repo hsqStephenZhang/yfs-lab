@@ -74,6 +74,9 @@ extent_client_cache::get(extent_protocol::extentid_t eid, std::string &buf) {
   ScopedLock l(&mutex);
   this->get_cache_locked(eid);
   auto it = cache.find(eid);
+  if (it == cache.end()) {
+    return extent_protocol::NOENT; // Not found in cache
+  }
   assert(it != cache.end());
   assert(it->second.state != cache_obj::None);
   if (it->second.state == cache_obj::Removed) {
@@ -82,7 +85,7 @@ extent_client_cache::get(extent_protocol::extentid_t eid, std::string &buf) {
   } else {
     // Object is cached, return the cached data
     buf = it->second.data;
-    it->second.attr.atime = get_now(); // Update access time
+    it->second.attr.atime = next_time(it->second.attr.atime); // Update access time
     printf("[CACHE-GET] %llu, content:%s\n", eid, buf.c_str());
     return extent_protocol::OK;
   }
@@ -97,6 +100,9 @@ extent_client_cache::getattr(extent_protocol::extentid_t eid,
   ScopedLock l(&mutex);
   this->get_cache_locked(eid);
   auto it = cache.find(eid);
+  if (it == cache.end()) {
+    return extent_protocol::NOENT; // Not found in cache
+  }
   assert(it != cache.end());
   assert(it->second.state != cache_obj::None);
   if (it->second.state == cache_obj::Removed) {
@@ -121,6 +127,9 @@ extent_client_cache::setattr(extent_protocol::extentid_t eid,
   ScopedLock l(&mutex);
   this->get_cache_locked(eid);
   auto it = cache.find(eid);
+  if (it == cache.end()) {
+    return extent_protocol::NOENT; // Not found in cache
+  }
   assert(it != cache.end());
   assert(it->second.state != cache_obj::None);
   if (it->second.state == cache_obj::Removed) {
@@ -144,10 +153,13 @@ extent_client_cache::put(extent_protocol::extentid_t eid, std::string buf) {
   ScopedLock l(&mutex);
   this->get_cache_or_init_locked(eid);
   auto it = cache.find(eid);
-  printf("[CACHE-PUT] Before Putting extent %llu, mtime: %u, size: %zu\n", eid,
-         it->second.attr.mtime, buf.size());
+  if (it == cache.end()) {
+    return extent_protocol::NOENT; // Not found in cache
+  }
   assert(it != cache.end());
   assert(it->second.state != cache_obj::None);
+  printf("[CACHE-PUT] Before Putting extent %llu, mtime: %u, size: %d\n", eid,
+         it->second.attr.mtime, it->second.attr.size);
   if (it->second.state == cache_obj::Removed) {
     printf("[CACHE-PUT] After NOENT %llu\n", eid);
     return extent_protocol::NOENT; // Object was removed
@@ -156,7 +168,7 @@ extent_client_cache::put(extent_protocol::extentid_t eid, std::string buf) {
     it->second.data = buf;
     it->second.state = cache_obj::Dirty; // Mark as dirty
     it->second.attr.size = buf.size();   // Update size
-    auto now = get_now();
+    auto now = next_time(it->second.attr.mtime);
     it->second.attr.atime = now; // Update modification time
     it->second.attr.mtime = now; // Update modification time
     it->second.attr.ctime = now; // Update change time
@@ -174,6 +186,9 @@ extent_client_cache::remove(extent_protocol::extentid_t eid) {
   ScopedLock l(&mutex);
   this->get_cache_locked(eid);
   auto it = cache.find(eid);
+  if (it == cache.end()) {
+    return extent_protocol::NOENT; // Not found in cache
+  }
   assert(it != cache.end());
   assert(it->second.state != cache_obj::None);
   if (it->second.state == cache_obj::Removed) {
@@ -183,10 +198,6 @@ extent_client_cache::remove(extent_protocol::extentid_t eid) {
     it->second.state = cache_obj::Removed; // Mark as removed
     it->second.data.clear();               // Clear the data
     it->second.attr.size = 0;              // Reset size
-    auto now = get_now();
-    it->second.attr.atime = now; // Update access time
-    it->second.attr.mtime = now; // Update modification time
-    it->second.attr.ctime = now; // Update change time
     return extent_protocol::OK;
   }
   return ret;

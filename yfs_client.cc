@@ -168,6 +168,7 @@ yfs_client::inum yfs_client::lookup(inum di, std::string name) {
 
   lc->acquire(di);
   auto res = lookup_locked(di, name);
+  printf("lookup %016llx for %s, res: %lld\n", di, name.c_str(), res);
   lc->release(di);
   return res;
 }

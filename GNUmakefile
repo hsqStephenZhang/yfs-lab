@@ -206,3 +206,6 @@ extent_server_test: extent_server_test.o extent_server.o rpc/librpc.a
 
 lock_cache_test: lock_cache_test.o lock_client_cache.o lock_server_cache.o lock_client.o lock_server.o rpc/librpc.a
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS) $(GTEST_LIBS)
+
+extent_client_cache_test: extent_client_cache_test.o extent_client_cache.o extent_client.o extent_server.o lock_client_cache.o lock_server_cache.o lock_client.o lock_server.o rpc/librpc.a
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS) $(GTEST_LIBS)

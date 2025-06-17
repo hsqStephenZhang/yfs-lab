@@ -11,11 +11,11 @@
 #include <algorithm>
 #include <arpa/inet.h>
 #include <assert.h>
+#include <atomic>
 #include <errno.h>
 #include <fcntl.h>
 #include <fuse/fuse_lowlevel.h>
 #include <fuse_lowlevel.h>
-#include <atomic>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,7 +33,6 @@ yfs_client::status getattr_helper(yfs_client::inum inum, struct stat &st) {
   bzero(&st, sizeof(st));
 
   st.st_ino = inum;
-  printf("getattr_helper %016llx %d\n", inum, yfs->isfile(inum));
   if (yfs->isfile(inum)) {
     yfs_client::fileinfo info;
     ret = yfs->getattr(inum, info);
@@ -45,7 +44,6 @@ yfs_client::status getattr_helper(yfs_client::inum inum, struct stat &st) {
     st.st_mtime = info.mtime;
     st.st_ctime = info.ctime;
     st.st_size = info.size;
-    printf("   getattr -> %llu\n", info.size);
   } else {
     yfs_client::dirinfo info;
     ret = yfs->getdir(inum, info);
@@ -56,7 +54,6 @@ yfs_client::status getattr_helper(yfs_client::inum inum, struct stat &st) {
     st.st_atime = info.atime;
     st.st_mtime = info.mtime;
     st.st_ctime = info.ctime;
-    printf("   getattr -> %lu %lu %lu\n", info.atime, info.mtime, info.ctime);
   }
   return yfs_client::OK;
 }
@@ -82,7 +79,7 @@ yfs_client::status create_helper(fuse_ino_t parent, const char *name,
 
   e->ino = new_ino;
   getattr_helper(new_ino, e->attr);
-  printf("create_helper %s %016lx %ld\n", name, new_ino, e->attr.st_mtime);
+  printf("[CREATE] %016lx/%016lx %s\n", parent, new_ino, name);
 
   return yfs_client::OK;
 }
@@ -124,7 +121,7 @@ void fuseserver_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
   if (FUSE_SET_ATTR_SIZE & to_set) {
     auto origin_mtime = st.st_mtime;
     st.st_size = attr->st_size;
-    auto current_time = get_now();
+    auto current_time = next_time(st.st_mtime);
     st.st_atime = current_time;
     st.st_mtime = current_time;
     st.st_ctime = current_time;
@@ -148,8 +145,9 @@ void fuseserver_setattr(fuse_req_t req, fuse_ino_t ino, struct stat *attr,
       fuse_reply_err(req, ENOENT);
       return;
     }
-    printf("[FUSE][SETATTR-%ld] after: %016lx, size: %ld, atime: %ld, mtime: %ld\n",local_id,
-           ino, st.st_size, st.st_atime, st.st_mtime);
+    printf("[FUSE][SETATTR-%ld] after: %016lx, size: %ld, atime: %ld, mtime: "
+           "%ld\n",
+           local_id, ino, st.st_size, st.st_atime, st.st_mtime);
   }
   if (ret != yfs_client::OK) {
     fuse_reply_err(req, ENOENT);
@@ -279,7 +277,7 @@ void fuseserver_readdir(fuse_req_t req, fuse_ino_t ino, size_t size, off_t off,
 
 void fuseserver_open(fuse_req_t req, fuse_ino_t ino,
                      struct fuse_file_info *fi) {
-  printf("open ino: %016lx, flags: %u\n", ino, fi->flags);
+  printf("[OPEN] ino: %016lx, flags: %u\n", ino, fi->flags);
   if (fi->flags & (O_CREAT | O_WRONLY | O_RDWR)) {
     struct stat st;
     yfs_client::status ret = getattr_helper(ino, st);
@@ -288,7 +286,7 @@ void fuseserver_open(fuse_req_t req, fuse_ino_t ino,
       return;
     }
     auto orig_mtime = st.st_mtime;
-    st.st_mtime = get_now();
+    st.st_mtime = next_time(orig_mtime);
     yfs->setattr(ino, st);
 
     struct stat new_st;
@@ -298,7 +296,7 @@ void fuseserver_open(fuse_req_t req, fuse_ino_t ino,
       return;
     }
 
-    printf("update mtime %016lx, orig mtime: %ld, new mtime: %ld\n", ino,
+    printf("[OPEN] update mtime %016lx, orig mtime: %ld, new mtime: %ld\n", ino,
            orig_mtime, new_st.st_mtime);
   }
   fuse_reply_open(req, fi);

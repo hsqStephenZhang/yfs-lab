@@ -17,10 +17,10 @@
 int extent_server::put(extent_protocol::extentid_t id, std::string buf,
                        int &r) {
   ScopedLock l(&m);
-  printf("[put] id: %016llx\n", id);
+  printf("[put] id: %016llx, content: %s, is empty: %d\n", id, buf.c_str(), buf.empty());
 
   extent_protocol::attr a;
-  auto now = get_now();
+  auto now = next_time(a.mtime);
   a.atime = a.ctime = a.mtime = now;
   a.size = buf.size();
   if (this->store.find(id) != this->store.end()) {
@@ -44,7 +44,7 @@ int extent_server::get(extent_protocol::extentid_t id, std::string &buf) {
 
   if (this->store.find(id) != this->store.end()) {
     buf = this->store[id].data;
-    this->store[id].attr.atime = get_now();
+    this->store[id].attr.atime = next_time(this->store[id].attr.atime);
     printf("[get] data: %s\n", buf.c_str());
     return extent_protocol::OK;
   } else {
