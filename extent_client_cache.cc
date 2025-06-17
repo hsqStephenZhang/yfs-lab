@@ -3,8 +3,8 @@
 #include "extent_client_cache.h"
 #include "extent_client.h"
 #include "extent_protocol.h"
-#include "slock.h"
 #include "now.h"
+#include "slock.h"
 #include <cassert>
 #include <iostream>
 #include <sstream>
@@ -48,6 +48,8 @@ extent_client_cache::get_cache_locked(extent_protocol::extentid_t eid) {
     if (ret == extent_protocol::OK) {
       ret = cl->call(extent_protocol::getattr, eid, tmp_attr);
     }
+    printf("[CACHE-GETLOCKED] %llu, content:%s, ret:%d\n", eid, tmp_buf.c_str(),
+           ret);
     if (ret == extent_protocol::OK) {
       // Cache the object
       cache_obj obj;
@@ -75,11 +77,13 @@ extent_client_cache::get(extent_protocol::extentid_t eid, std::string &buf) {
   assert(it != cache.end());
   assert(it->second.state != cache_obj::None);
   if (it->second.state == cache_obj::Removed) {
+    printf("[CACHE-GET] NOENT %llu\n", eid);
     return extent_protocol::NOENT; // Object was removed
   } else {
     // Object is cached, return the cached data
     buf = it->second.data;
     it->second.attr.atime = get_now(); // Update access time
+    printf("[CACHE-GET] %llu, content:%s\n", eid, buf.c_str());
     return extent_protocol::OK;
   }
 
@@ -96,6 +100,7 @@ extent_client_cache::getattr(extent_protocol::extentid_t eid,
   assert(it != cache.end());
   assert(it->second.state != cache_obj::None);
   if (it->second.state == cache_obj::Removed) {
+    printf("[CACHE-GETATTR] NOENT %llu\n", eid);
     return extent_protocol::NOENT; // Object was removed
   } else {
     // Object is cached, return the cached data
@@ -119,6 +124,7 @@ extent_client_cache::setattr(extent_protocol::extentid_t eid,
   assert(it != cache.end());
   assert(it->second.state != cache_obj::None);
   if (it->second.state == cache_obj::Removed) {
+    printf("[CACHE-GET] NOENT %llu\n", eid);
     return extent_protocol::NOENT; // Object was removed
   } else {
     // Object is cached, return the cached data
@@ -151,10 +157,12 @@ extent_client_cache::put(extent_protocol::extentid_t eid, std::string buf) {
     it->second.state = cache_obj::Dirty; // Mark as dirty
     it->second.attr.size = buf.size();   // Update size
     auto now = get_now();
-    it->second.attr.mtime = now;     // Update modification time
-    it->second.attr.ctime = now;     // Update change time
-    printf("[CACHE-PUT] After Putting extent %llu, now: %lu, mtime: %u, size: %zu\n", eid, now,
-           it->second.attr.mtime, buf.size());
+    it->second.attr.atime = now; // Update modification time
+    it->second.attr.mtime = now; // Update modification time
+    it->second.attr.ctime = now; // Update change time
+    printf("[CACHE-PUT] After Putting extent %llu, now: %lu, mtime: %u, size: "
+           "%zu\n",
+           eid, now, it->second.attr.mtime, buf.size());
     return extent_protocol::OK;
   }
   return ret;
@@ -176,9 +184,9 @@ extent_client_cache::remove(extent_protocol::extentid_t eid) {
     it->second.data.clear();               // Clear the data
     it->second.attr.size = 0;              // Reset size
     auto now = get_now();
-    it->second.attr.atime = now;       // Update access time
-    it->second.attr.mtime = now;       // Update modification time
-    it->second.attr.ctime = now;       // Update change time
+    it->second.attr.atime = now; // Update access time
+    it->second.attr.mtime = now; // Update modification time
+    it->second.attr.ctime = now; // Update change time
     return extent_protocol::OK;
   }
   return ret;
@@ -186,31 +194,42 @@ extent_client_cache::remove(extent_protocol::extentid_t eid) {
 
 extent_protocol::status
 extent_client_cache::flush(extent_protocol::extentid_t eid) {
+  extent_protocol::status ret = extent_protocol::OK;
   ScopedLock l(&mutex);
   auto it = cache.find(eid);
   if (it != cache.end()) {
     if (it->second.state == cache_obj::Dirty) {
+      printf("[CACHE-FLUSH] Flushing dirty extent %llu to server, state: %d\n",
+             eid, it->second.state);
       // Flush the dirty object to the server
-      extent_protocol::status ret =
-          cl->call(extent_protocol::put, eid, it->second.data);
+      int tmp = 0;
+      ret = cl->call(extent_protocol::put, eid, it->second.data, tmp);
       if (ret == extent_protocol::OK) {
         // we lose the ownership of the obj after the flush
-        ret = cl->call(extent_protocol::setattr, eid, it->second.attr);
+        ret = cl->call(extent_protocol::setattr, eid, it->second.attr, tmp);
+      } else {
+        printf("[CACHE-FLUSH] Failed to flush extent %llu to server, ret: %d\n",
+               eid, ret);
       }
       if (ret == extent_protocol::OK) {
-        printf("[CACHE] Flushing extent %llu to server\n", eid);
-        it->second.state = cache_obj::None;
+        printf("[CACHE-FLUSH] Flushing extent %llu to server\n", eid);
+      } else {
+        printf("[CACHE-FLUSH] Failed to flush extent attr %llu to server, ret: "
+               "%d\n",
+               eid, ret);
       }
-      return ret;
     } else if (it->second.state == cache_obj::Removed) {
       // If the object was removed, we should also remove it from the server
-      extent_protocol::status ret = cl->call(extent_protocol::remove, eid);
+      int tmp = 0;
+      extent_protocol::status ret = cl->call(extent_protocol::remove, eid, tmp);
       if (ret == extent_protocol::OK) {
-        printf("[CACHE] Flushing extent %llu (removed) to server\n", eid);
-        cache.erase(it); // Remove from cache
+        printf("[CACHE-FLUSH] Flushing extent %llu (removed) to server\n", eid);
       }
-      return ret;
     }
+    cache.erase(it); // Remove from cache
+  } else {
+    printf("[CACHE-FLUSH] No cache for extent %llu to flush\n", eid);
+    return extent_protocol::NOENT; // No cache found
   }
   return extent_protocol::OK; // Nothing to flush
 }
