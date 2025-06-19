@@ -50,7 +50,7 @@ log::logread(void)
       printf("logread: prop update %d(%s) with v = %s\n", pxs->n_a.n, 
 	     pxs->n_a.m.c_str(), pxs->v_a.c_str());
     } else {
-      printf("logread: unknown log record\n");
+      printf("logread: unknown log record, type: %s\n", type.c_str());
       assert(0);
     }
   } 

@@ -65,6 +65,8 @@ proposer::proposer(class paxos_change *_cfg, class acceptor *_acceptor,
     : cfg(_cfg), acc(_acceptor), me(_me), break1(false), break2(false),
       stable(true) {
   assert(pthread_mutex_init(&pxs_mutex, NULL) == 0);
+  my_n.n = 0;
+  my_n.m = me; // use my address as the unique id for this proposer
 }
 
 void proposer::setn() {
@@ -273,8 +275,8 @@ paxos_protocol::status acceptor::preparereq(std::string src,
                                             paxos_protocol::prepareres &r) {
   ScopedLock ml(&pxs_mutex);
 
-  tprintf("preparereq for instance %d (my instance %d) v=%s\n", a.instance,
-          instance_h, v_a.c_str());
+  tprintf("preparereq for instance %d (my instance %d) v=%s, n.m=%s, n.n=%d\n", a.instance,
+          instance_h, v_a.c_str(), a.n.m.c_str(), a.n.n);
 
   r.oldinstance = r.accept = false;
 
