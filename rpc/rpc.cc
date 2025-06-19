@@ -72,7 +72,7 @@
 #include <sys/types.h>
 #include <time.h>
 
-#include "gettime.h"
+// #include "gettime.h"
 #include "jsl_log.h"
 
 const rpcc::TO rpcc::to_max = {120000};
@@ -97,9 +97,10 @@ inline void set_rand_seed() {
 
 rpcc::rpcc(sockaddr_in d, bool retrans)
     : dst_(d), srv_nonce_(0), bind_done_(false), xid_(1), lossytest_(0),
-      retrans_(retrans), chan_(NULL) {
+      retrans_(retrans), reachable_(true), chan_(NULL), destroy_wait_(false) {
   assert(pthread_mutex_init(&m_, 0) == 0);
   assert(pthread_mutex_init(&chan_m_, 0) == 0);
+  assert(pthread_cond_init(&destroy_wait_c_, 0) == 0);
 
   if (retrans) {
     set_rand_seed();
@@ -150,6 +151,30 @@ int rpcc::bind(TO to) {
   }
   return ret;
 };
+
+// Cancel all outstanding calls
+void rpcc::cancel(void) {
+  ScopedLock ml(&m_);
+  printf("rpcc::cancel: force callers to fail\n");
+  std::map<int, caller *>::iterator iter;
+  for (iter = calls_.begin(); iter != calls_.end(); iter++) {
+    caller *ca = iter->second;
+
+    jsl_log(JSL_DBG_2, "rpcc::cancel: force caller to fail\n");
+    {
+      ScopedLock cl(&ca->m);
+      ca->done = true;
+      ca->intret = rpc_const::cancel_failure;
+      assert(pthread_cond_signal(&ca->c) == 0);
+    }
+  }
+
+  while (calls_.size() > 0) {
+    destroy_wait_ = true;
+    assert(pthread_cond_wait(&destroy_wait_c_, &m_) == 0);
+  }
+  printf("rpcc::cancel: done\n");
+}
 
 int rpcc::call1(unsigned int proc, marshall &req, unmarshall &rep, TO to) {
 
@@ -327,7 +352,8 @@ compress:
 }
 
 rpcs::rpcs(unsigned int p1, int count)
-    : port_(p1), counting_(count), curr_counts_(count), lossytest_(0) {
+    : port_(p1), counting_(count), curr_counts_(count), lossytest_(0),
+      reachable_(true) {
   assert(pthread_mutex_init(&procs_m_, 0) == 0);
   assert(pthread_mutex_init(&count_m_, 0) == 0);
   assert(pthread_mutex_init(&reply_window_m_, 0) == 0);
@@ -373,33 +399,32 @@ void rpcs::reg1(unsigned int proc, handler *h) {
   assert(procs_.count(proc) >= 1);
 }
 
-void
-rpcs::updatestat(unsigned int proc)
-{
-	ScopedLock cl(&count_m_);
-	counts_[proc]++;
-	curr_counts_--;
-	if(curr_counts_ == 0) {
-		std::map<int, int>::iterator i;
-		printf("RPC STATS: ");
-		for (i = counts_.begin(); i != counts_.end(); i++) {
-			printf("%x %d ", i->first, i->second);
-		}
-		printf("\n");
+void rpcs::updatestat(unsigned int proc) {
+  ScopedLock cl(&count_m_);
+  counts_[proc]++;
+  curr_counts_--;
+  if (curr_counts_ == 0) {
+    std::map<int, int>::iterator i;
+    printf("RPC STATS: ");
+    for (i = counts_.begin(); i != counts_.end(); i++) {
+      printf("%x %d ", i->first, i->second);
+    }
+    printf("\n");
 
-		ScopedLock rwl(&reply_window_m_);
-		std::map<unsigned int,std::list<reply_t> >::iterator clt;
+    ScopedLock rwl(&reply_window_m_);
+    std::map<unsigned int, std::list<reply_t>>::iterator clt;
 
-		unsigned int totalrep = 0, maxrep = 0;
-		for (clt = reply_window_.begin(); clt != reply_window_.end(); clt++) {
-			totalrep += clt->second.size();
-			if (clt->second.size() > maxrep)
-				maxrep = clt->second.size();
-		}
-		jsl_log(JSL_DBG_1, "REPLY WINDOW: clients %ld total reply %d max per client %d\n", 
-				reply_window_.size(), totalrep, maxrep);
-		curr_counts_ = counting_;
-	}
+    unsigned int totalrep = 0, maxrep = 0;
+    for (clt = reply_window_.begin(); clt != reply_window_.end(); clt++) {
+      totalrep += clt->second.size();
+      if (clt->second.size() > maxrep)
+        maxrep = clt->second.size();
+    }
+    jsl_log(JSL_DBG_1,
+            "REPLY WINDOW: clients %ld total reply %d max per client %d\n",
+            reply_window_.size(), totalrep, maxrep);
+    curr_counts_ = counting_;
+  }
 }
 
 void rpcs::dispatch(djob_t *j) {
@@ -462,10 +487,10 @@ void rpcs::dispatch(djob_t *j) {
       // if we don't know about this clt_nonce, create a cleanup object
       if (reply_window_.find(h.clt_nonce) == reply_window_.end()) {
         assert(reply_window_[h.clt_nonce].size() == 0); // create
-        jsl_log(
-            JSL_DBG_2,
-            "rpcs::dispatch: new client %u xid %d chan %d, total clients %d\n",
-            h.clt_nonce, h.xid, c->channo(), (int)reply_window_.size());
+        jsl_log(JSL_DBG_2,
+                "rpcs::dispatch: new client %u xid %d chan %d, total clients "
+                "%d\n",
+                h.clt_nonce, h.xid, c->channo(), (int)reply_window_.size());
       }
     }
 
@@ -708,13 +733,11 @@ marshall &operator<<(marshall &m, unsigned long long x) {
   return m;
 }
 
-void
-marshall::pack(int x)
-{
-	rawbyte((x >> 24) & 0xff);
-	rawbyte((x >> 16) & 0xff);
-	rawbyte((x >> 8) & 0xff);
-	rawbyte(x & 0xff);
+void marshall::pack(int x) {
+  rawbyte((x >> 24) & 0xff);
+  rawbyte((x >> 16) & 0xff);
+  rawbyte((x >> 8) & 0xff);
+  rawbyte(x & 0xff);
 }
 
 void unmarshall::unpack(int *x) {
@@ -748,6 +771,13 @@ unsigned int unmarshall::rawbyte() {
   else
     c = _buf[_ind++];
   return c;
+}
+
+unmarshall &
+operator>>(unmarshall &u, bool &x)
+{
+  x = (bool) u.rawbyte();
+  return u;
 }
 
 unmarshall &operator>>(unmarshall &u, unsigned char &x) {
@@ -796,22 +826,18 @@ unmarshall &operator>>(unmarshall &u, unsigned long long &x) {
   return u;
 }
 
-marshall &
-operator<<(marshall &m, unsigned long x)
-{
-	if(sizeof(unsigned long) == sizeof(unsigned int))
-		return m << (unsigned int) x;
-	if(sizeof(unsigned long) == sizeof(unsigned long long))
-		return m << (unsigned long long) x;
+marshall &operator<<(marshall &m, unsigned long x) {
+  if (sizeof(unsigned long) == sizeof(unsigned int))
+    return m << (unsigned int)x;
+  if (sizeof(unsigned long) == sizeof(unsigned long long))
+    return m << (unsigned long long)x;
 }
 
-unmarshall &
-operator>>(unmarshall &u, unsigned long &x)
-{
-	if(sizeof(unsigned long) == sizeof(unsigned int))
-		return u >> (unsigned int &) x;
-	if(sizeof(unsigned long) == sizeof(unsigned long long))
-		return u >> (unsigned long long &) x;
+unmarshall &operator>>(unmarshall &u, unsigned long &x) {
+  if (sizeof(unsigned long) == sizeof(unsigned int))
+    return u >> (unsigned int &)x;
+  if (sizeof(unsigned long) == sizeof(unsigned long long))
+    return u >> (unsigned long long &)x;
 }
 
 unmarshall &operator>>(unmarshall &u, std::string &s) {
