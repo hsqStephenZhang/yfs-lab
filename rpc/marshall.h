@@ -195,7 +195,6 @@ class unmarshall {
 		}
 };
 
-unmarshall& operator>>(unmarshall &, bool &);
 unmarshall& operator>>(unmarshall &, unsigned char &);
 unmarshall& operator>>(unmarshall &, char &);
 unmarshall& operator>>(unmarshall &, unsigned short &);

@@ -60,6 +60,12 @@ bool proposer::majority(const std::vector<std::string> &l1,
   return n >= (l1.size() >> 1) + 1;
 }
 
+void debug_majority(const std::vector<std::string> &l1,
+                    const std::vector<std::string> &l2) {
+  printf("majority: l1=%s l2=%s\n", print_members(l1).c_str(),
+         print_members(l2).c_str());
+}
+
 proposer::proposer(class paxos_change *_cfg, class acceptor *_acceptor,
                    std::string _me)
     : cfg(_cfg), acc(_acceptor), me(_me), break1(false), break2(false),
@@ -96,7 +102,7 @@ bool proposer::run(int instance, std::vector<std::string> c_nodes,
   v.clear();
   nodes = c_nodes;
   if (prepare(instance, accepts, nodes, v)) {
-
+    debug_majority(c_nodes, accepts);
     if (majority(c_nodes, accepts)) {
       printf("paxos::manager: received a majority of prepare responses\n");
 
@@ -110,6 +116,7 @@ bool proposer::run(int instance, std::vector<std::string> c_nodes,
       accepts.clear();
       accept(instance, accepts, nodes1, v);
 
+      debug_majority(c_nodes, accepts);
       if (majority(c_nodes, accepts)) {
         printf("paxos::manager: received a majority of accept responses\n");
 
@@ -161,6 +168,8 @@ bool proposer::prepare(unsigned instance, std::vector<std::string> &accepts,
       }
 
       if (res.oldinstance) {
+        tprintf("prepare[%s->%s]: old instance %d, value %s\n", me.c_str(),
+                node.c_str(), instance, res.instance_v.c_str());
         acc->commit(instance, res.instance_v);
         return false;
       }
@@ -199,10 +208,11 @@ void proposer::accept(unsigned instance, std::vector<std::string> &accepts,
     rpcc *cl = h.get_rpcc();
 
     if (cl != NULL) {
-      bool res = false;
+      int res = 0;
 
       status =
           cl->call(paxos_protocol::acceptreq, me, arg, res, rpcc::to(1000));
+      tprintf("acceptreq to %s: status=%d res=%d\n", node.c_str(), status, res);
       if (status != paxos_protocol::OK) {
         if (status == rpc_const::atmostonce_failure ||
             status == rpc_const::oldsrv_failure) {
@@ -275,13 +285,15 @@ paxos_protocol::status acceptor::preparereq(std::string src,
                                             paxos_protocol::prepareres &r) {
   ScopedLock ml(&pxs_mutex);
 
-  tprintf("preparereq for instance %d (my instance %d) v=%s, n.m=%s, n.n=%d\n", a.instance,
-          instance_h, v_a.c_str(), a.n.m.c_str(), a.n.n);
+  tprintf("preparereq for instance %d (my instance %d) v=%s, n.m=%s, n.n=%d\n",
+          a.instance, instance_h, v_a.c_str(), a.n.m.c_str(), a.n.n);
 
   r.oldinstance = r.accept = false;
 
   if (a.instance <= instance_h) {
     r.oldinstance = true;
+    tprintf("preparereq: old instance %d, my instance %d, value %s\n",
+            a.instance, instance_h, value(a.instance).c_str());
     r.instance_v = value(a.instance);
 
     return paxos_protocol::OK;
@@ -317,9 +329,9 @@ acceptor::acceptreq(std::string src, paxos_protocol::acceptarg a, int &r) {
     v_a = a.v;
     l->logprop(a.n, a.v);
 
-    r = true;
+    r = 1;
   } else {
-    r = false;
+    r = 0;
   }
 
   return paxos_protocol::OK;
